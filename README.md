@@ -112,26 +112,29 @@ npm run e2e      # spin/reset/bust/attract/takeover + a clean console
 
 ## Deploying
 
-`.github/workflows/pages.yml` publishes to GitHub Pages on every push to `dev`
-(and on manual dispatch). It copies only `index.html`, `favicon.svg`, `src/` and
-`vendor/` into the artifact — `tools/` is a local harness and `docs/` is README
-screenshots, so neither belongs on the site.
+**Live:** https://lajoonpark.github.io/Gamble/
 
-**One-time setup:** turn on Pages at
-[Settings → Pages](https://github.com/lajoonpark/Gamble/settings/pages) with
-**Source: GitHub Actions**. This cannot be automated: creating a Pages site
-requires repository *admin*, and a workflow token can never hold admin (the
-`configure-pages` action's `enablement` option fails with
-`Resource not accessible by integration` for exactly this reason). The workflow
-checks for it and fails early with that link rather than a confusing later error.
+`.github/workflows/pages.yml` publishes on every push to `dev`: it copies
+`index.html`, `favicon.svg`, `src/` and `vendor/` into `_site/`, then force-pushes
+that as a single commit to the `gh-pages` branch, which Pages serves. `tools/` is
+a local harness and `docs/` is README screenshots, so neither ships.
 
-A project site is served from **`/Gamble/`**, which is the one real trap here:
-any root-absolute path (`src="/vendor/..."`) resolves outside the site and 404s.
-The workflow fails the build if it finds one, so this cannot regress silently.
-Everything is relative today, and both the import map and vendor/ are relative
-too, which is why the build works from a subpath with no bundler and no base tag.
-The workflow also deliberately skips `configure-pages`: it exists to hand you
-`base_path`/`origin` for absolute links, which a relative-only site never needs.
+**Why a branch and not an artifact upload.** The tidier setup is
+`upload-pages-artifact` + `deploy-pages`, but that requires Pages' build type to
+be `workflow`, and changing it — like first enabling Pages — needs repository
+**admin**. A workflow token can never hold admin (`configure-pages`'s
+`enablement` option fails with `Resource not accessible by integration` for
+exactly this reason), and a `repo`-scoped personal token gets 403 on the Pages
+REST endpoints. Pushing a `gh-pages` branch, by contrast, is an ordinary contents
+write: it is what auto-enabled Pages here in the first place. To move to artifact
+deploys later, set Settings → Pages → Source: **GitHub Actions** once, then swap
+the last step for `upload-pages-artifact` + `deploy-pages`.
+
+A project site is served from **`/Gamble/`**, which is the one real trap: a
+root-absolute path (`src="/vendor/..."`) resolves outside the site and 404s. The
+workflow fails the build if it finds one, so this cannot regress silently.
+Everything is relative today — the import map and `vendor/` included — which is
+why this works from a subpath with no bundler and no base tag.
 
 Local `…/index.html` matters: the import map and module paths assume the page is
 loaded over http. Open it through `npm start`, not as a `file://` URL.
