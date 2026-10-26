@@ -18,7 +18,8 @@ brushed metal read as metal.
 
 ## Run it
 
-**Live:** https://lajoonpark.github.io/Gamble/ (deployed from `dev`)
+**Live:** https://lajoonpark.github.io/Gamble/ (deployed from `dev` —
+see [Deploying](#deploying) for the one-time Pages setting)
 
 ```sh
 npm start            # http://127.0.0.1:5173
@@ -116,11 +117,21 @@ npm run e2e      # spin/reset/bust/attract/takeover + a clean console
 `vendor/` into the artifact — `tools/` is a local harness and `docs/` is README
 screenshots, so neither belongs on the site.
 
+**One-time setup:** turn on Pages at
+[Settings → Pages](https://github.com/lajoonpark/Gamble/settings/pages) with
+**Source: GitHub Actions**. This cannot be automated: creating a Pages site
+requires repository *admin*, and a workflow token can never hold admin (the
+`configure-pages` action's `enablement` option fails with
+`Resource not accessible by integration` for exactly this reason). The workflow
+checks for it and fails early with that link rather than a confusing later error.
+
 A project site is served from **`/Gamble/`**, which is the one real trap here:
 any root-absolute path (`src="/vendor/..."`) resolves outside the site and 404s.
 The workflow fails the build if it finds one, so this cannot regress silently.
 Everything is relative today, and both the import map and vendor/ are relative
 too, which is why the build works from a subpath with no bundler and no base tag.
+The workflow also deliberately skips `configure-pages`: it exists to hand you
+`base_path`/`origin` for absolute links, which a relative-only site never needs.
 
 Local `…/index.html` matters: the import map and module paths assume the page is
 loaded over http. Open it through `npm start`, not as a `file://` URL.

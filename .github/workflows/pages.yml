@@ -35,6 +35,22 @@ jobs:
           cp -r index.html favicon.svg src vendor _site/
           du -sh _site
 
+      # Fail with the actual remedy rather than a confusing 404 from a later
+      # step. Enabling Pages is a one-time repo-admin action; it cannot be done
+      # from a workflow, and the REST call needs the `pages` scope, which most
+      # personal tokens do not have.
+      - name: Check Pages is enabled
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh api "repos/${{ github.repository }}/pages" >/dev/null 2>&1; then
+            echo "::error::GitHub Pages is not enabled for this repository."
+            echo "::error::Fix once at: https://github.com/${{ github.repository }}/settings/pages"
+            echo "::error::  -> Source: GitHub Actions, then re-run this workflow."
+            exit 1
+          fi
+          echo "Pages is enabled"
+
       - name: Sanity-check the bundle
         run: |
           set -e
@@ -49,13 +65,11 @@ jobs:
           fi
           echo "paths are relative"
 
-      # `enablement: true` lets the workflow create the Pages site itself on the
-      # first run (the workflow token has pages: write), so no manual Settings
-      # step is needed. It is a no-op once Pages exists.
-      - uses: actions/configure-pages@v5
-        with:
-          enablement: true
-
+      # Note: no configure-pages step. Every asset path is relative, so the
+      # action's `base_path`/`origin` outputs are not needed, and it cannot be
+      # used to bootstrap the site: creating a Pages site needs repo *admin*,
+      # and a workflow token can never hold admin. Pages has to be switched on
+      # once in Settings -> Pages -> Source: GitHub Actions.
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
