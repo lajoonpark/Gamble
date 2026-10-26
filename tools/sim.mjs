@@ -1,5 +1,5 @@
 // Verifies the shipped paytable against the shipped strips, then samples sessions.
-import { STRIPS, STRIP_LENGTH, evaluate, betFor, mulberry32, money, round2 } from '../src/game.js';
+import { STRIPS, STRIP_LENGTH, evaluate, betFor, mulberry32, round2, dust } from '../src/game.js';
 
 const N = STRIP_LENGTH;
 let rtp = 0, hit = 0, total = 0;
@@ -38,9 +38,9 @@ for (const cap of [25, 50, 100, 200, 400]) {
   const peaks = runs.map((r) => r.peak).sort((a, b) => a - b);
   console.log(
     `cap ${String(cap).padStart(3)}: alive ${(100 * alive / runs.length).toFixed(0).padStart(3)}%` +
-    `  median surviving ${money(aliveBals[aliveBals.length >> 1] ?? 0, 0).padStart(8)}` +
-    `  p50 peak ${money(peaks[1000], 0).padStart(7)}` +
-    `  p99 peak ${money(peaks[1980], 0).padStart(8)}`,
+    `  median surviving ${dust(aliveBals[aliveBals.length >> 1] ?? 0, 0).padStart(8)}` +
+    `  p50 peak ${dust(peaks[1000], 0).padStart(7)}` +
+    `  p99 peak ${dust(peaks[1980], 0).padStart(8)}`,
   );
 }
 

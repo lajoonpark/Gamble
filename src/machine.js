@@ -2,41 +2,31 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { STRIPS, STRIP_LENGTH } from './game.js';
 import {
-  marqueeTexture, balanceTexture, symbolTexture, streakTexture, glowTexture,
-  paytableTexture,
+  wordmarkTexture, balanceTexture, symbolTexture, streakTexture, glowTexture,
+  paytableTexture, glassTexture,
 } from './textures.js';
 import { clamp, lerp, damp, Follower, Tweens, easeOutQuart, easeOutBack, spring } from './util.js';
 
 const STRIP_LEN = STRIP_LENGTH;
 const STEP = (Math.PI * 2) / STRIP_LEN;
 
-// Cabinet proportions. Reels are viewed through a recessed window, so the
-// drum sits behind the front face and the neighbouring symbols curve away.
-const DRUM_R = 1.12;
-const CELL_W = 0.98;
-// 12 stops around the drum: one cell of arc, so 3 cells fill the window and
-// the neighbouring symbols curve away just out of view.
+// Proportions: a tall monolith with one large glass window. Everything else is
+// a seam or a hairline, so the silhouette carries the design.
+const DRUM_R = 1.16;
+const CELL_W = 1.10;
 const CELL_H = (Math.PI * 2 * DRUM_R) / STRIP_LEN;
-const DRUM_Z = -0.62;
-const WINDOW_Y = 0.34;
-const WINDOW_W = 3.42;
+const DRUM_Z = -0.55;
+const WINDOW_Y = 0.42;
+const WINDOW_W = 3.44;
 const WINDOW_H = CELL_H * 3;
-// Depth of the cabinet shell; the fascia (and everything mounted on it) sits
-// at +CABINET_FRONT so trim and marquee stand proud of the body.
-const CABINET_D = 1.45;
-const CABINET_FRONT = CABINET_D / 2;
 const CABINET_W = 4.0;
-const CABINET_H = 4.35;
+const CABINET_H = 4.25;
+const CABINET_D = 1.55;
+const CABINET_FRONT = CABINET_D / 2;
+const RADIUS = 0.34;
 
-const PALETTE = {
-  cabinet: 0x2a0a3c,
-  cabinetDeep: 0x14041f,
-  chrome: 0xeef2ff,
-  gold: 0xffc95c,
-  magenta: 0xff3fb0,
-  cyan: 0x38e8ff,
-  red: 0xff1f3d,
-};
+// One accent, used sparingly: the payline, the seams and win states.
+const ACCENT = 0x5f9cff;
 
 export class SlotMachine {
   constructor({ tweens = new Tweens() } = {}) {
@@ -50,8 +40,8 @@ export class SlotMachine {
     this.spinState = ['idle', 'idle', 'idle'];
 
     this.time = 0;
-    this.tiltX = new Follower(0, 5.5);
-    this.tiltY = new Follower(0, 5.5);
+    this.tiltX = new Follower(0, 5.0);
+    this.tiltY = new Follower(0, 5.0);
     this.jolt = 0;
     this.joltVel = 0;
     this.excite = 0;
@@ -62,201 +52,213 @@ export class SlotMachine {
     this.onReelLand = null;
 
     this.mats = {
-      chrome: new THREE.MeshPhysicalMaterial({
-        color: PALETTE.chrome, metalness: 1, roughness: 0.16, envMapIntensity: 1.35,
+      shell: new THREE.MeshPhysicalMaterial({
+        color: 0x111823, metalness: 0.62, roughness: 0.34,
+        clearcoat: 0.75, clearcoatRoughness: 0.22, envMapIntensity: 1.05,
       }),
-      gold: new THREE.MeshPhysicalMaterial({
-        color: PALETTE.gold, metalness: 1, roughness: 0.26, envMapIntensity: 1.2,
-        clearcoat: 1, clearcoatRoughness: 0.18,
+      face: new THREE.MeshPhysicalMaterial({
+        color: 0x0c121b, metalness: 0.5, roughness: 0.44,
+        clearcoat: 0.5, clearcoatRoughness: 0.3, envMapIntensity: 0.9,
       }),
-      lacquer: new THREE.MeshPhysicalMaterial({
-        color: PALETTE.cabinet, metalness: 0.35, roughness: 0.22,
-        clearcoat: 1, clearcoatRoughness: 0.08, envMapIntensity: 0.95,
+      metal: new THREE.MeshPhysicalMaterial({
+        color: 0xb9c6d6, metalness: 1, roughness: 0.17, envMapIntensity: 1.5,
       }),
-      lacquerDeep: new THREE.MeshPhysicalMaterial({
-        color: PALETTE.cabinetDeep, metalness: 0.3, roughness: 0.42,
-        clearcoat: 0.6, clearcoatRoughness: 0.3, envMapIntensity: 0.7,
+      metalDark: new THREE.MeshPhysicalMaterial({
+        color: 0x2b3546, metalness: 1, roughness: 0.32, envMapIntensity: 1.1,
+      }),
+      well: new THREE.MeshStandardMaterial({
+        color: 0x04060a, metalness: 0.2, roughness: 0.92, side: THREE.BackSide,
       }),
     };
 
     this.buildCabinet();
+    this.buildSeams();
     this.buildReels();
     this.buildLever();
-    this.buildMarquee();
-    this.buildBulbs();
+    this.buildWordmark();
     this.buildBalance();
   }
 
   // ------------------------------------------------------------- cabinet
 
   /**
-   * The cabinet is an open-fronted box: four fascia panels plus a shell, so the
-   * reel window is a genuine hole with 1.45 units of depth instead of a decal
-   * on a solid box (a solid front would occlude the drums entirely).
+   * Open-fronted shell: four fascia panels plus side/top/bottom walls, so the
+   * reel window is a genuine recess with depth instead of a decal on a box.
    */
   buildCabinet() {
-    const { chrome, gold, lacquer, lacquerDeep } = this.mats;
+    const { shell, face, metal, metalDark, well } = this.mats;
 
     const W = CABINET_W;
     const H = CABINET_H;
     const D = CABINET_D;
     const halfW = W / 2;
     const halfH = H / 2;
-    const front = D / 2;
+    const front = CABINET_FRONT;
 
     const winL = -WINDOW_W / 2;
     const winR = WINDOW_W / 2;
     const winB = WINDOW_Y - WINDOW_H / 2;
     const winT = WINDOW_Y + WINDOW_H / 2;
 
-    const panel = (w, h, x, y, mat = lacquer, depth = D, z = 0) => {
-      const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, depth, 4, 0.06), mat);
+    const panel = (w, h, x, y, mat = shell, depth = D, z = 0, r = RADIUS) => {
+      const m = new THREE.Mesh(
+        new RoundedBoxGeometry(w, h, depth, 5, Math.min(r, w / 2.05, h / 2.05)),
+        mat,
+      );
       m.position.set(x, y, z);
       this.body.add(m);
       return m;
     };
 
-    // Back, sides, top and bottom of the shell.
-    panel(W - 0.1, H - 0.1, 0, 0, lacquerDeep, 0.12, -front + 0.06);
-    panel(0.3, H, -halfW + 0.15, 0, lacquer);
-    panel(0.3, H, halfW - 0.15, 0, lacquer);
-    panel(W, 0.3, 0, halfH - 0.15, lacquer);
-    panel(W, 0.3, 0, -halfH + 0.15, lacquer);
+    // Back wall, sides, top and base of the shell.
+    panel(W - 0.06, H - 0.06, 0, 0, face, 0.1, -front + 0.05);
+    panel(0.26, H, -halfW + 0.13, 0, shell, D, 0, RADIUS);
+    panel(0.26, H, halfW - 0.13, 0, shell, D, 0, RADIUS);
+    panel(W, 0.26, 0, halfH - 0.13, shell, D, 0, RADIUS);
+    panel(W, 0.26, 0, -halfH + 0.13, shell, D, 0, RADIUS);
 
-    // Front fascia: top band, bottom band and the two side pillars.
-    panel(W, halfH - winT, 0, (winT + halfH) / 2, lacquer);
-    panel(W, winB + halfH, 0, (winB - halfH) / 2, lacquer);
-    panel(winL + halfW, WINDOW_H, (-halfW + winL) / 2, WINDOW_Y, lacquer);
-    panel(halfW - winR, WINDOW_H, (winR + halfW) / 2, WINDOW_Y, lacquer);
+    // Front fascia: top band, bottom band, and the two pillars around the window.
+    panel(W, halfH - winT, 0, (winT + halfH) / 2, face, D, 0, RADIUS);
+    panel(W, winB + halfH, 0, (winB - halfH) / 2, face, D, 0, RADIUS);
+    panel(winL + halfW, WINDOW_H, (-halfW + winL) / 2, WINDOW_Y, face, D, 0, RADIUS);
+    panel(halfW - winR, WINDOW_H, (winR + halfW) / 2, WINDOW_Y, face, D, 0, RADIUS);
 
-    // Soft inner throat so the window has depth rather than a flat edge.
-    const throatMat = new THREE.MeshStandardMaterial({
-      color: 0x150a22, metalness: 0.55, roughness: 0.55, side: THREE.DoubleSide,
-    });
-    const throat = (w, h, x, y, rotX = 0, rotY = 0, z = 0) => {
-      const g = new THREE.Mesh(new THREE.PlaneGeometry(w, h), throatMat);
-      g.position.set(x, y, z);
+    // Interior: a dark well so the window has real depth.
+    const throat = (w, h, x, y, rotX, rotY) => {
+      const g = new THREE.Mesh(new THREE.PlaneGeometry(w, h), well);
+      g.position.set(x, y, -0.06);
       g.rotation.x = rotX;
       g.rotation.y = rotY;
       this.body.add(g);
     };
-    throat(WINDOW_W, D * 0.86, 0, winT, Math.PI / 2, 0, -0.1);
-    throat(WINDOW_W, D * 0.86, 0, winB, -Math.PI / 2, 0, -0.1);
-    throat(D * 0.86, WINDOW_H, winL, WINDOW_Y, 0, Math.PI / 2, -0.1);
-    throat(D * 0.86, WINDOW_H, winR, WINDOW_Y, 0, -Math.PI / 2, -0.1);
+    throat(WINDOW_W, D * 0.9, 0, winT, Math.PI / 2, 0);
+    throat(WINDOW_W, D * 0.9, 0, winB, -Math.PI / 2, 0);
+    throat(D * 0.9, WINDOW_H, winL, WINDOW_Y, 0, Math.PI / 2);
+    throat(D * 0.9, WINDOW_H, winR, WINDOW_Y, 0, -Math.PI / 2);
 
-    const bez = (w, h, x, y, mat, d = 0.1, r = 0.03) => {
-      const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 3, r), mat);
-      m.position.set(x, y, front + 0.03);
-      this.body.add(m);
-      return m;
-    };
-    // Gold frame, chrome hairline inside it.
-    bez(WINDOW_W + 0.34, 0.11, 0, winT + 0.06, gold);
-    bez(WINDOW_W + 0.34, 0.11, 0, winB - 0.06, gold);
-    bez(0.11, WINDOW_H + 0.23, winL - 0.12, WINDOW_Y, gold);
-    bez(0.11, WINDOW_H + 0.23, winR + 0.12, WINDOW_Y, gold);
-    bez(WINDOW_W + 0.12, 0.028, 0, winT + 0.005, chrome, 0.06, 0.01);
-    bez(WINDOW_W + 0.12, 0.028, 0, winB - 0.005, chrome, 0.06, 0.01);
-
-    // Gold trim ribbon running around the whole fascia.
-    const ribbon = (w, h, x, y) => {
-      const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, 0.07, 3, 0.025), gold);
-      m.position.set(x, y, front + 0.02);
+    // Machined bezel: a thin metal frame, the only bright edge on the front.
+    const bez = (w, h, x, y) => {
+      const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, 0.075, 3, 0.022), metal);
+      m.position.set(x, y, front + 0.005);
       this.body.add(m);
     };
-    ribbon(W - 0.06, 0.05, 0, winT + 0.30);
-    ribbon(W - 0.06, 0.05, 0, -1.42);
-    ribbon(0.05, 1.0, -1.72, 1.72);
-    ribbon(0.05, 1.0, 1.72, 1.72);
+    bez(WINDOW_W + 0.16, 0.055, 0, winT + 0.028);
+    bez(WINDOW_W + 0.16, 0.055, 0, winB - 0.028);
+    bez(0.055, WINDOW_H + 0.11, winL - 0.055, WINDOW_Y);
+    bez(0.055, WINDOW_H + 0.11, winR + 0.055, WINDOW_Y);
 
-    // Plinth.
-    const plinth = new THREE.Mesh(new RoundedBoxGeometry(4.32, 0.46, 1.72, 4, 0.1), lacquerDeep);
-    plinth.position.set(0, -2.30, 0.01);
+    // Glass across the window.
+    const glass = new THREE.Mesh(
+      new THREE.PlaneGeometry(WINDOW_W, WINDOW_H),
+      new THREE.MeshPhysicalMaterial({
+        map: glassTexture(), transparent: true, opacity: 0.5,
+        roughness: 0.06, metalness: 0, clearcoat: 1,
+        depthWrite: false, toneMapped: false,
+      }),
+    );
+    glass.position.set(0, WINDOW_Y, front - 0.02);
+    this.body.add(glass);
+
+    // Payline: one hairline, not a slot-cabinet stripe.
+    const lineMat = new THREE.MeshBasicMaterial({
+      color: ACCENT, transparent: true, opacity: 0.22, toneMapped: false,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const line = new THREE.Mesh(new THREE.PlaneGeometry(WINDOW_W - 0.02, 0.008), lineMat);
+    line.position.set(0, WINDOW_Y, front - 0.015);
+    this.body.add(line);
+    this.payline = line;
+    this.paylineBase = 0.22;
+
+    // Plinth: a black slab that grounds the object.
+    const plinth = new THREE.Mesh(
+      new RoundedBoxGeometry(W + 0.16, 0.24, D + 0.2, 4, 0.06),
+      new THREE.MeshPhysicalMaterial({
+        color: 0x05080d, metalness: 0.5, roughness: 0.36,
+        clearcoat: 0.6, clearcoatRoughness: 0.25, envMapIntensity: 0.8,
+      }),
+    );
+    plinth.position.set(0, -halfH - 0.10, 0);
     this.body.add(plinth);
 
-    const skirt = new THREE.Mesh(
-      new THREE.PlaneGeometry(4.0, 0.12),
-      new THREE.MeshBasicMaterial({ color: 0xffcf5c, toneMapped: false }),
+    // Contact shadow: a soft dark ellipse under the plinth. Grounds the object
+    // without adding any light to the scene.
+    const pool = new THREE.Mesh(
+      new THREE.PlaneGeometry(W + 1.6, D + 1.5),
+      new THREE.MeshBasicMaterial({
+        map: glowTexture('rgba(0,0,0,0.62)', 'rgba(0,0,0,0)', 256),
+        transparent: true, depthWrite: false, toneMapped: false, opacity: 0.9,
+      }),
     );
-    skirt.position.set(0, -2.23, front + 0.12);
-    this.body.add(skirt);
-    this.skirt = skirt;
+    pool.rotation.x = -Math.PI / 2;
+    pool.position.set(0, -halfH - 0.24, 0.08);
+    this.body.add(pool);
+    this.pool = pool;
 
-    // Paytable on the lower fascia.
+    // Paytable, low contrast, on the lower fascia.
     const pay = new THREE.Mesh(
-      new THREE.PlaneGeometry(2.62, 0.655),
-      new THREE.MeshBasicMaterial({ map: paytableTexture(), transparent: true, toneMapped: false }),
+      new THREE.PlaneGeometry(2.5, 0.625),
+      new THREE.MeshBasicMaterial({
+        map: paytableTexture(), transparent: true, toneMapped: false, opacity: 0.85,
+      }),
     );
-    pay.position.set(0, -1.13, front + 0.045);
+    pay.position.set(0, -1.22, front + 0.004);
     this.body.add(pay);
     this.paytable = pay;
 
-    // Coin tray on the lower fascia.
-    const trayLip = new THREE.Mesh(new RoundedBoxGeometry(2.1, 0.28, 0.3, 4, 0.09), chrome);
-    trayLip.position.set(0, -1.92, front + 0.02);
-    trayLip.rotation.x = -0.26;
-    this.body.add(trayLip);
+    // The coin tray becomes a simple machined slot.
+    const slot = new THREE.Mesh(new RoundedBoxGeometry(2.0, 0.09, 0.06, 3, 0.02), metalDark);
+    slot.position.set(0, -1.80, front + 0.01);
+    this.body.add(slot);
 
-    const trayVoid = new THREE.Mesh(
-      new RoundedBoxGeometry(1.82, 0.2, 0.1, 4, 0.04),
-      new THREE.MeshBasicMaterial({ color: 0x05010a }),
+    const slotVoid = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.9, 0.05),
+      new THREE.MeshBasicMaterial({ color: 0x020306, toneMapped: false }),
     );
-    trayVoid.position.set(0, -1.91, front + 0.13);
-    trayVoid.rotation.x = -0.26;
-    this.body.add(trayVoid);
+    slotVoid.position.set(0, -1.80, front + 0.045);
+    this.body.add(slotVoid);
+  }
 
-    // Crown.
-    const crown = new THREE.Mesh(new RoundedBoxGeometry(4.06, 0.28, 1.5, 4, 0.09), gold);
-    crown.position.set(0, halfH + 0.06, 0);
-    this.body.add(crown);
+  /**
+   * The visual identity in two thin lines: a hairline along the top of the face
+   * and one along the bottom. Everything else stays dark.
+   */
+  buildSeams() {
+    const front = CABINET_FRONT;
+    const mat = new THREE.MeshBasicMaterial({
+      color: ACCENT, transparent: true, opacity: 0.16, toneMapped: false,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    this.seamMat = mat;
 
-    // Side chrome rails.
-    for (const sgn of [-1, 1]) {
-      const rail = new THREE.Mesh(new RoundedBoxGeometry(0.1, H - 0.5, 1.16, 4, 0.04), chrome);
-      rail.position.set(sgn * (halfW + 0.04), 0, 0);
-      this.body.add(rail);
-    }
+    const topRule = new THREE.Mesh(new THREE.PlaneGeometry(CABINET_W - 0.7, 0.007), mat);
+    topRule.position.set(0, CABINET_H / 2 - 0.44, front + 0.006);
+    this.body.add(topRule);
 
-    const glow = new THREE.Mesh(
-      new THREE.PlaneGeometry(9, 3.2),
-      new THREE.MeshBasicMaterial({
-        map: glowTexture('rgba(255,60,190,0.5)', 'rgba(255,60,190,0)', 256),
-        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-        toneMapped: false,
-      }),
-    );
-    glow.rotation.x = -Math.PI / 2;
-    glow.position.set(0, -2.55, 0.2);
-    this.body.add(glow);
-    this.underGlow = glow;
+
   }
 
   // --------------------------------------------------------------- reels
 
   buildReels() {
-    // The dark void behind the drums.
     const voidBox = new THREE.Mesh(
-      new THREE.BoxGeometry(WINDOW_W, WINDOW_H, 1.4),
-      new THREE.MeshStandardMaterial({
-        color: 0x08030f, metalness: 0.3, roughness: 0.9, side: THREE.BackSide,
-      }),
+      new THREE.BoxGeometry(WINDOW_W, WINDOW_H, 1.3),
+      this.mats.well,
     );
-    voidBox.position.set(0, WINDOW_Y, 0.02);
+    voidBox.position.set(0, WINDOW_Y, 0.0);
     this.body.add(voidBox);
 
-    const xStart = -1.06;
-    const gap = 1.06;
+    const xStart = -1.16;
+    const gap = 1.16;
 
     for (let i = 0; i < 3; i++) {
       const group = new THREE.Group();
       group.position.set(xStart + i * gap, WINDOW_Y, DRUM_Z);
       this.body.add(group);
 
-      // Cylinder body of the drum, slightly proud of the symbol faces.
       const backer = new THREE.Mesh(
-        new THREE.CylinderGeometry(DRUM_R * 0.999, DRUM_R * 0.999, CELL_W, 32, 1, true),
-        new THREE.MeshStandardMaterial({ color: 0x07030d, metalness: 0.35, roughness: 0.88 }),
+        new THREE.CylinderGeometry(DRUM_R * 0.998, DRUM_R * 0.998, CELL_W, 40, 1, true),
+        new THREE.MeshStandardMaterial({ color: 0x0a0f17, metalness: 0.45, roughness: 0.7 }),
       );
       backer.rotation.z = Math.PI / 2;
       group.add(backer);
@@ -268,8 +270,7 @@ export class SlotMachine {
       const mats = [];
       for (let k = 0; k < STRIP_LEN; k++) {
         const symbol = STRIPS[i][k];
-        const tex = symbolTexture(symbol);
-        const mat = new THREE.MeshBasicMaterial({ map: tex, toneMapped: false });
+        const mat = new THREE.MeshBasicMaterial({ map: symbolTexture(symbol), toneMapped: false });
         const cell = new THREE.Mesh(new THREE.PlaneGeometry(CELL_W, CELL_H * 0.995), mat);
         const a = k * STEP;
         cell.position.set(0, -Math.sin(a) * DRUM_R, Math.cos(a) * DRUM_R);
@@ -281,286 +282,149 @@ export class SlotMachine {
         mats.push(mat);
       }
 
-      // Dark seams between symbols.
+      // Hairline seams between symbols instead of chunky dark bars.
       for (let k = 0; k < STRIP_LEN; k++) {
         const a = (k + 0.5) * STEP;
         const bar = new THREE.Mesh(
-          new THREE.BoxGeometry(CELL_W, 0.02, 0.015),
-          new THREE.MeshStandardMaterial({ color: 0x160828, metalness: 0.8, roughness: 0.3 }),
+          new THREE.BoxGeometry(CELL_W, 0.006, 0.006),
+          new THREE.MeshBasicMaterial({ color: 0x1b2534, toneMapped: false }),
         );
-        bar.position.set(0, -Math.sin(a) * (DRUM_R + 0.006), Math.cos(a) * (DRUM_R + 0.006));
+        bar.position.set(0, -Math.sin(a) * (DRUM_R + 0.004), Math.cos(a) * (DRUM_R + 0.004));
         bar.rotation.x = a;
         drum.add(bar);
       }
 
-      // Motion smear during the spin.
       const smear = new THREE.Mesh(
-        new THREE.CylinderGeometry(DRUM_R * 1.02, DRUM_R * 1.02, CELL_W * 0.98, 32, 1, true),
+        new THREE.CylinderGeometry(DRUM_R * 1.015, DRUM_R * 1.015, CELL_W * 0.98, 40, 1, true),
         new THREE.MeshBasicMaterial({
-          map: streakTexture('#ffffff'),
-          transparent: true, opacity: 0, depthWrite: false,
+          map: streakTexture(), transparent: true, opacity: 0, depthWrite: false,
           blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false,
         }),
       );
       smear.rotation.z = Math.PI / 2;
       group.add(smear);
 
-      // Only used for the brief flare when a reel lands; the printed cells are
-      // emissive, so the drums need no standing illumination.
-      const light = new THREE.PointLight(0xfff2e0, 0, 2.6, 2);
-      light.position.set(0, 0.1, 0.55);
+      // Only used for the brief flare as a reel lands.
+      const light = new THREE.PointLight(0xcfe4ff, 0, 2.2, 2);
+      light.position.set(0, 0.1, 0.5);
       group.add(light);
 
       this.reels.push({ group, drum, cells, mats, smear, light, index: i });
     }
 
-    // Curvature shading: dark at the window edges, bright through the middle.
+    // Curvature shading: the window edges fall into shadow.
     const shadeCanvas = document.createElement('canvas');
     shadeCanvas.width = 8;
     shadeCanvas.height = 256;
     const sctx = shadeCanvas.getContext('2d');
     const sg = sctx.createLinearGradient(0, 0, 0, 256);
-    sg.addColorStop(0, 'rgba(0,0,0,0.85)');
-    sg.addColorStop(0.13, 'rgba(0,0,0,0.34)');
-    sg.addColorStop(0.32, 'rgba(0,0,0,0)');
-    sg.addColorStop(0.5, 'rgba(255,235,215,0.05)');
-    sg.addColorStop(0.68, 'rgba(0,0,0,0)');
-    sg.addColorStop(0.87, 'rgba(0,0,0,0.34)');
-    sg.addColorStop(1, 'rgba(0,0,0,0.85)');
+    sg.addColorStop(0, 'rgba(0,0,0,0.92)');
+    sg.addColorStop(0.15, 'rgba(0,0,0,0.4)');
+    sg.addColorStop(0.36, 'rgba(0,0,0,0)');
+    sg.addColorStop(0.5, 'rgba(150,190,255,0.03)');
+    sg.addColorStop(0.64, 'rgba(0,0,0,0)');
+    sg.addColorStop(0.85, 'rgba(0,0,0,0.4)');
+    sg.addColorStop(1, 'rgba(0,0,0,0.92)');
     sctx.fillStyle = sg;
     sctx.fillRect(0, 0, 8, 256);
-    const shadeTex = new THREE.CanvasTexture(shadeCanvas);
     const shade = new THREE.Mesh(
       new THREE.PlaneGeometry(WINDOW_W, WINDOW_H),
       new THREE.MeshBasicMaterial({
-        map: shadeTex, transparent: true, depthWrite: false, toneMapped: false,
+        map: new THREE.CanvasTexture(shadeCanvas),
+        transparent: true, depthWrite: false, toneMapped: false,
       }),
     );
-    shade.position.set(0, WINDOW_Y, CABINET_FRONT + 0.06);
+    shade.position.set(0, WINDOW_Y, CABINET_FRONT + 0.03);
     this.body.add(shade);
-
-    // Glass.
-    const glass = new THREE.Mesh(
-      new THREE.PlaneGeometry(WINDOW_W, WINDOW_H),
-      new THREE.MeshPhysicalMaterial({
-        color: 0xffffff, transparent: true, opacity: 0.05,
-        roughness: 0.05, metalness: 0, clearcoat: 1,
-      }),
-    );
-    glass.position.set(0, WINDOW_Y, 0.86);
-    this.body.add(glass);
-
-    // Payline.
-    const lineMat = new THREE.MeshBasicMaterial({
-      color: 0xff2244, transparent: true, opacity: 0.3, toneMapped: false,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-    });
-    const line = new THREE.Mesh(new THREE.PlaneGeometry(WINDOW_W + 0.06, 0.018), lineMat);
-    line.position.set(0, WINDOW_Y, 0.885);
-    this.body.add(line);
-    this.payline = line;
-
-    for (const s of [-1, 1]) {
-      const cap = new THREE.Mesh(
-        new THREE.ConeGeometry(0.075, 0.17, 4),
-        new THREE.MeshBasicMaterial({ color: 0xff3355, toneMapped: false }),
-      );
-      cap.position.set(s * (WINDOW_W / 2 + 0.04), WINDOW_Y, 0.885);
-      cap.rotation.z = -s * Math.PI / 2;
-      cap.rotation.y = Math.PI / 4;
-      this.body.add(cap);
-    }
   }
 
   // --------------------------------------------------------------- lever
 
   buildLever() {
-    // Housing bolted to the right flank.
-    const housing = new THREE.Mesh(
-      new RoundedBoxGeometry(0.34, 0.62, 0.52, 4, 0.09),
-      this.mats.lacquerDeep,
-    );
-    housing.position.set(CABINET_W / 2 + 0.10, 0.42, 0.30);
-    this.body.add(housing);
+    const { metal, metalDark, face } = this.mats;
 
-    const plate = new THREE.Mesh(
-      new RoundedBoxGeometry(0.08, 0.5, 0.42, 3, 0.04),
-      this.mats.gold,
-    );
-    plate.position.set(CABINET_W / 2 + 0.28, 0.42, 0.30);
-    this.body.add(plate);
+    const housing = new THREE.Mesh(new RoundedBoxGeometry(0.30, 0.54, 0.46, 4, 0.08), face);
+    housing.position.set(CABINET_W / 2 + 0.08, 0.30, 0.30);
+    this.body.add(housing);
 
     // Pivot sits outside the flank so the arm sweeps clear of the cabinet.
     const pivot = new THREE.Group();
-    pivot.position.set(CABINET_W / 2 + 0.34, 0.46, 0.30);
+    pivot.position.set(CABINET_W / 2 + 0.30, 0.34, 0.30);
     this.body.add(pivot);
 
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.22, 24), this.mats.chrome);
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.135, 0.135, 0.2, 28), metal);
     hub.rotation.z = Math.PI / 2;
     pivot.add(hub);
 
-    const boss = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.30, 18), this.mats.gold);
+    const boss = new THREE.Mesh(new THREE.CylinderGeometry(0.072, 0.072, 0.26, 20), metalDark);
     boss.rotation.z = Math.PI / 2;
     pivot.add(boss);
 
     const arm = new THREE.Group();
     pivot.add(arm);
 
-    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.07, 1.62, 18), this.mats.chrome);
-    rod.position.y = 0.85;
+    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.055, 1.55, 20), metal);
+    rod.position.y = 0.81;
     arm.add(rod);
 
-    // Ribbed grip near the hub.
-    for (let i = 0; i < 5; i++) {
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.066, 0.013, 8, 20), this.mats.gold);
+    // Knurled grip rings near the hub.
+    for (let i = 0; i < 4; i++) {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.055, 0.009, 8, 22), metalDark);
       ring.rotation.x = Math.PI / 2;
-      ring.position.y = 0.26 + i * 0.075;
+      ring.position.y = 0.24 + i * 0.062;
       arm.add(ring);
     }
 
+    // Dark knob: the one soft, rounded mass on the machine.
     const knobMat = new THREE.MeshPhysicalMaterial({
-      color: 0xff1a45, metalness: 0.18, roughness: 0.09,
-      clearcoat: 1, clearcoatRoughness: 0.03, emissive: 0x3a0008, emissiveIntensity: 0.9,
+      color: 0x141b26, metalness: 0.35, roughness: 0.24,
+      clearcoat: 1, clearcoatRoughness: 0.14, envMapIntensity: 1.2,
+      emissive: ACCENT, emissiveIntensity: 0,
     });
-    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.235, 32, 24), knobMat);
-    knob.position.y = 1.72;
+    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.2, 32, 24), knobMat);
+    knob.position.y = 1.60;
     arm.add(knob);
     this.knobMat = knobMat;
 
-    const collar = new THREE.Mesh(new THREE.TorusGeometry(0.185, 0.03, 10, 26), this.mats.gold);
+    const collar = new THREE.Mesh(new THREE.TorusGeometry(0.155, 0.022, 10, 28), metal);
     collar.rotation.x = Math.PI / 2;
-    collar.position.y = 1.54;
+    collar.position.y = 1.45;
     arm.add(collar);
 
-    const knobGlow = new THREE.Mesh(
-      new THREE.SphereGeometry(0.40, 20, 16),
-      new THREE.MeshBasicMaterial({
-        color: 0xff2450, transparent: true, opacity: 0.16,
-        blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
-      }),
-    );
-    knobGlow.position.y = 1.72;
-    arm.add(knobGlow);
-
-    const restZ = 0.10;
+    const restZ = 0.08;
     pivot.rotation.z = restZ;
-    // Negative Z swings the arm clockwise, so the knob drops toward the floor.
-    this.lever = { pivot, arm, knob, knobGlow, restZ, pullZ: -1.30 };
+    // Negative Z swings the arm clockwise, dropping the knob toward the floor.
+    this.lever = { pivot, arm, knob, restZ, pullZ: -1.24 };
   }
 
-  // ------------------------------------------------------------- marquee
-
-  buildMarquee() {
-    const tex = marqueeTexture({ text: 'LUCKY 7', sub: 'DIAMOND EDITION' });
-    const panel = new THREE.Mesh(
-      new RoundedBoxGeometry(3.62, 1.24, 0.16, 4, 0.07),
-      new THREE.MeshPhysicalMaterial({
-        color: 0x140424, metalness: 0.65, roughness: 0.24, clearcoat: 1,
-        clearcoatRoughness: 0.1, envMapIntensity: 0.9,
-      }),
-    );
-    panel.position.set(0, 1.72, CABINET_FRONT + 0.02);
-    this.body.add(panel);
-
+  buildWordmark() {
+    const tex = wordmarkTexture({ text: 'SINGULARITY', sub: 'STARDUST' });
     const plate = new THREE.Mesh(
-      new THREE.PlaneGeometry(3.36, 1.05),
-      new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }),
+      new THREE.PlaneGeometry(1.62, 0.405),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, toneMapped: false, opacity: 0.72 }),
     );
-    plate.position.set(0, 1.72, CABINET_FRONT + 0.10);
+    plate.position.set(0, 1.72, CABINET_FRONT + 0.004);
     this.body.add(plate);
-    this.marquee = plate;
-  }
-
-  // --------------------------------------------------------------- bulbs
-
-  buildBulbs() {
-    const positions = [];
-    const halfW = WINDOW_W / 2 + 0.27;
-    const yBot = WINDOW_Y - WINDOW_H / 2 - 0.19;
-    const yTop = WINDOW_Y + WINDOW_H / 2 + 0.19;
-    const z = CABINET_FRONT + 0.075;
-
-    // Bulb rails down both sides of the window.
-    const rows = 9;
-    for (let i = 0; i < rows; i++) {
-      const t = i / (rows - 1);
-      const y = lerp(yBot, yTop, t);
-      positions.push([-halfW, y, z]);
-      positions.push([halfW, y, z]);
-    }
-    // Along the crown.
-    for (let i = 0; i <= 13; i++) {
-      const x = lerp(-1.80, 1.80, i / 13);
-      positions.push([x, CABINET_H / 2 + 0.13, z]);
-    }
-
-    const geo = new THREE.SphereGeometry(0.046, 12, 10);
-    // White bulb plus a bright bloom shell so each one reads as a glowing lamp.
-    const mesh = new THREE.InstancedMesh(
-      geo,
-      new THREE.MeshBasicMaterial({ toneMapped: false }),
-      positions.length,
-    );
-    mesh.instanceColor = new THREE.InstancedBufferAttribute(
-      new Float32Array(positions.length * 3), 3,
-    );
-
-    const m = new THREE.Matrix4();
-    const col = new THREE.Color();
-    positions.forEach((p, i) => {
-      m.makeTranslation(p[0], p[1], p[2]);
-      mesh.setMatrixAt(i, m);
-      mesh.setColorAt(i, col.setRGB(1, 0.8, 0.3));
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    this.body.add(mesh);
-
-    const halos = new THREE.InstancedMesh(
-      new THREE.PlaneGeometry(0.34, 0.34),
-      new THREE.MeshBasicMaterial({
-        map: glowTexture('rgba(255,220,140,1)', 'rgba(255,150,40,0)', 128),
-        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-        toneMapped: false, opacity: 0.85,
-      }),
-      positions.length,
-    );
-    positions.forEach((p, i) => {
-      m.makeTranslation(p[0], p[1], p[2] + 0.03);
-      halos.setMatrixAt(i, m);
-    });
-    halos.instanceMatrix.needsUpdate = true;
-    this.body.add(halos);
-
-    this.bulbs = { mesh, halos, count: positions.length, positions };
+    this.wordmark = plate;
   }
 
   buildBalance() {
     const { texture, redraw } = balanceTexture();
     this.balanceRedraw = redraw;
-    const mat = new THREE.MeshBasicMaterial({
-      map: texture, transparent: true, toneMapped: false, depthWrite: false,
-    });
-    const sprite = new THREE.Mesh(new THREE.PlaneGeometry(2.9, 1.16), mat);
-    sprite.position.set(0, 3.30, 0.1);
+    const sprite = new THREE.Mesh(
+      new THREE.PlaneGeometry(2.72, 1.02),
+      new THREE.MeshBasicMaterial({
+        map: texture, transparent: true, toneMapped: false, depthWrite: false,
+      }),
+    );
+    sprite.position.set(0, 3.26, 0.1);
     this.root.add(sprite);
     this.balanceSprite = sprite;
 
-    const halo = new THREE.Mesh(
-      new THREE.PlaneGeometry(5.2, 2.4),
-      new THREE.MeshBasicMaterial({
-        map: glowTexture('rgba(255,190,90,0.35)', 'rgba(255,120,200,0)', 256),
-        transparent: true, opacity: 0.7, depthWrite: false,
-        blending: THREE.AdditiveBlending, toneMapped: false,
-      }),
-    );
-    halo.position.set(0, 3.30, 0.02);
-    this.root.add(halo);
-    this.balanceHalo = halo;
-
-    this.balanceState = { balance: 100, bet: 10, busted: false, flash: 0, flashColor: '#39ffa0' };
+    this.balanceState = { balance: 100, bet: 10, busted: false, flash: 0, flashColor: '#5f9cff' };
     this.balanceFlash = new Follower(0, 6);
-    this.balanceShown = 100;
     this.setBalance(100, 10, false);
+    this.dirtyBalance = true;
   }
 
   setBalance(balance, bet, busted) {
@@ -570,11 +434,18 @@ export class SlotMachine {
     this.dirtyBalance = true;
   }
 
-  flashBalance(color = '#39ffa0') {
+  flashBalance(color = '#5f9cff') {
     this.balanceState.flashColor = color;
     this.balanceFlash.value = 1;
     this.balanceFlash.target = 1;
-    this.tweens.add({ dur: 0.9, from: 1, to: 0, ease: easeOutQuart, onUpdate: (v) => { this.balanceFlash.target = v; this.balanceFlash.value = Math.max(this.balanceFlash.value, v * 0.9); this.dirtyBalance = true; } });
+    this.tweens.add({
+      dur: 0.9, from: 1, to: 0, ease: easeOutQuart,
+      onUpdate: (v) => {
+        this.balanceFlash.target = v;
+        this.balanceFlash.value = Math.max(this.balanceFlash.value, v * 0.9);
+        this.dirtyBalance = true;
+      },
+    });
     this.dirtyBalance = true;
   }
 
@@ -616,8 +487,8 @@ export class SlotMachine {
           onUpdate: (v, k) => {
             this.rotStops[i] = v;
             const speed = 1 - k;
-            this.reels[i].smear.material.opacity = clamp(speed * 1.25, 0, 0.72);
-            this.reels[i].light.intensity = clamp(speed * 1.1, 0, 1.1);
+            this.reels[i].smear.material.opacity = clamp(speed * 1.1, 0, 0.5);
+            this.reels[i].light.intensity = clamp(speed * 0.9, 0, 0.9);
           },
           onDone: () => {
             this.rotStops[i] = target;
@@ -637,24 +508,18 @@ export class SlotMachine {
   }
 
   landReel(i, teased) {
-    this.jolt = Math.max(this.jolt, teased ? 1.5 : 0.9);
-    this.joltVel = -2.2;
+    this.jolt = Math.max(this.jolt, teased ? 1.4 : 0.85);
+    this.joltVel = -2.0;
     this.onReelLand?.(i, teased);
 
     const reel = this.reels[i];
     this.tweens.add({
-      dur: 0.5,
-      from: 0.85,
-      to: 0,
-      ease: easeOutQuart,
+      dur: 0.5, from: 0.7, to: 0, ease: easeOutQuart,
       onUpdate: (v) => { reel.light.intensity = v; },
     });
     this.tweens.add({
-      dur: 0.28,
-      from: 0,
-      to: 1,
-      ease: (t) => spring(t, 3.2, 7),
-      onUpdate: (v) => { reel.group.position.y = WINDOW_Y - v * 0.016; },
+      dur: 0.28, from: 0, to: 1, ease: (t) => spring(t, 3.2, 7),
+      onUpdate: (v) => { reel.group.position.y = WINDOW_Y - v * 0.012; },
     });
   }
 
@@ -680,11 +545,11 @@ export class SlotMachine {
           // Lerp toward the accent (never past white) so pale symbols keep
           // their detail; a small additive lift gives the bloom.
           const pulse = Math.sin(v * Math.PI);
-          const lift = 1 + pulse * 0.28;
+          const lift = 1 + pulse * 0.12;
           mat.color.setRGB(
-            lerp(1, tint.r, pulse * 0.55) * lift,
-            lerp(1, tint.g, pulse * 0.55) * lift,
-            lerp(1, tint.b, pulse * 0.55) * lift,
+            lerp(1, tint.r, pulse * 0.3) * lift,
+            lerp(1, tint.g, pulse * 0.3) * lift,
+            lerp(1, tint.b, pulse * 0.3) * lift,
           );
         },
         onDone: () => mat.color.setRGB(1, 1, 1),
@@ -692,42 +557,26 @@ export class SlotMachine {
     }
   }
 
-  /** Bulbs, lights and payline react to a winning line. */
+  /** Seams and payline react to a winning line. */
   celebrate(tier) {
     this.winGlow = 1;
     this.excite = 1;
-    const strength = tier === 'jackpot' ? 3 : tier === 'big' ? 1.9 : 1;
+    const strength = tier === 'jackpot' ? 2.6 : tier === 'big' ? 1.8 : 1;
     this.tweens.add({
-      dur: 1.4 * strength,
-      from: 1,
-      to: 0,
-      ease: easeOutQuart,
+      dur: 1.4 * strength, from: 1, to: 0, ease: easeOutQuart,
       onUpdate: (v) => { this.winGlow = v; },
     });
-    this.jolt = Math.max(this.jolt, 1.2 * strength);
-    this.joltVel = -3.4 * strength;
-    this.tweens.add({
-      dur: 0.7,
-      from: 0.42,
-      to: 0.36,
-      ease: easeOutQuart,
-      onUpdate: (v) => { this.payline.material.opacity = v; },
-    });
+    this.jolt = Math.max(this.jolt, 1.1 * strength);
+    this.joltVel = -3.0 * strength;
   }
 
   pullLever() {
     this.tweens.add({
-      dur: 0.22,
-      from: this.lever.restZ,
-      to: this.lever.pullZ,
-      ease: easeOutQuart,
+      dur: 0.22, from: this.lever.restZ, to: this.lever.pullZ, ease: easeOutQuart,
       onUpdate: (v) => { this.leverPull = v; },
     });
     this.tweens.add({
-      delay: 0.34,
-      dur: 0.85,
-      from: this.lever.pullZ,
-      to: this.lever.restZ,
+      delay: 0.34, dur: 0.85, from: this.lever.pullZ, to: this.lever.restZ,
       ease: (t) => easeOutBack(t, 1.55),
       onUpdate: (v) => { this.leverPull = v; },
     });
@@ -749,76 +598,53 @@ export class SlotMachine {
     this.tiltY.step(dt);
     this.balanceFlash.step(dt);
 
-    // Idle breathing plus pointer tilt.
     const t = this.time;
-    const breathe = Math.sin(t * 0.7) * 0.012;
-    const bob = Math.sin(t * 1.1) * 0.035;
+    // Restraint: a whisper of independent motion, so the object still feels
+    // alive when the cursor never moves.
+    const breathe = Math.sin(t * 0.62) * 0.006;
+    const bob = Math.sin(t * 0.94) * 0.018;
 
-    const leanX = this.tiltX.value * 0.17;
-    const leanY = this.tiltY.value * 0.26;
-    this.root.rotation.x = damp(this.root.rotation.x, leanX + breathe, 9, dt);
-    this.root.rotation.y = damp(this.root.rotation.y, leanY, 9, dt);
-    this.root.rotation.z = damp(this.root.rotation.z, -leanY * 0.06, 8, dt);
-    this.root.position.y = bob + this.excite * 0.0;
+    const leanX = this.tiltX.value * 0.058;
+    const leanY = this.tiltY.value * 0.088;
+    this.root.rotation.x = damp(this.root.rotation.x, leanX + breathe, 7, dt);
+    this.root.rotation.y = damp(this.root.rotation.y, leanY, 7, dt);
+    this.root.rotation.z = damp(this.root.rotation.z, -leanY * 0.05, 6, dt);
+    this.root.position.y = bob;
 
     // Mechanical jolt on the Y axis with spring decay.
     this.joltVel += -this.jolt * 42 * dt;
     this.joltVel *= Math.exp(-7 * dt);
     this.jolt += this.joltVel * dt;
-    this.body.position.y = this.jolt * 0.05;
-    this.body.rotation.z = this.jolt * 0.012;
+    this.body.position.y = this.jolt * 0.045;
+    this.body.rotation.z = this.jolt * 0.009;
 
-    this.excite = damp(this.excite, this.spinning ? 1 : 0.12, 3, dt);
+    this.excite = damp(this.excite, this.spinning ? 1 : 0.1, 3, dt);
 
     for (let i = 0; i < 3; i++) {
       const r = this.reels[i];
       r.drum.rotation.x = this.rotStops[i] * STEP;
-      // Subtle wobble of each drum against its neighbours.
-      r.drum.position.z = Math.sin(t * 2.1 + i) * 0.002;
+      r.drum.position.z = Math.sin(t * 1.9 + i) * 0.0015;
     }
 
-    // Lever.
     if (this.lever) {
       this.lever.pivot.rotation.z = this.leverPull;
-      this.lever.knobGlow.material.opacity = 0.13 + 0.08 * Math.sin(t * 3.4) + this.excite * 0.2;
-      this.knobMat.emissiveIntensity = 0.7 + this.excite * 1.4;
+      this.knobMat.emissiveIntensity = 0;
     }
 
-    this.updateBulbs(t);
+    // Seams breathe with the machine's state; on a win they flare.
+    const seam = 0.16 + 0.3 * this.winGlow + this.excite * 0.16 + Math.sin(t * 1.1) * 0.03;
+    this.seamMat.opacity = damp(this.seamMat.opacity, seam, 6, dt);
+
+    const pl = this.paylineBase + this.winGlow * 0.55 + Math.sin(t * 1.7) * 0.03;
+    this.payline.material.opacity = damp(this.payline.material.opacity, pl, 7, dt);
+
+    this.pool.material.opacity = damp(
+      this.pool.material.opacity,
+      0.85 + this.winGlow * 0.12,
+      5, dt,
+    );
+
     this.updateBalance(dt, t);
-
-    const hoverLift = this.hover ? 0.02 : 0;
-    this.underGlow.scale.setScalar(1 + this.winGlow * 0.12 + hoverLift);
-    this.underGlow.material.opacity = 0.55 + this.winGlow * 0.5;
-
-    const pl = 0.30 + 0.10 * Math.sin(t * 2.4) + this.winGlow * 0.5;
-    this.payline.material.opacity = damp(this.payline.material.opacity, pl, 8, dt);
-  }
-
-  updateBulbs(t) {
-    const { mesh, count } = this.bulbs;
-    const c = new THREE.Color();
-    const chase = t * (this.spinning ? 7.5 : 2.4);
-    const win = this.winGlow;
-
-    for (let i = 0; i < count; i++) {
-      const p = this.bulbs.positions[i];
-      const around = (p[0] + 2.0) * 2.6 + (p[1] + 0.6) * 1.7;
-      const wave = 0.5 + 0.5 * Math.sin(chase - around * 1.6);
-      const lit = clamp(wave ** 2.2);
-
-      if (win > 0.02) {
-        const strobe = 0.5 + 0.5 * Math.sin(t * 26 + i * 1.9);
-        const k = lit * (0.45 + win) + strobe * win * 0.8;
-        c.setRGB(1.0, 0.55 + 0.45 * strobe, 0.12);
-        c.multiplyScalar(clamp(k, 0, 3.2));
-      } else {
-        const warm = 0.35 + 1.15 * lit;
-        c.setRGB(1.0 * warm, (0.62 + 0.3 * lit) * warm, (0.18 + 0.1 * lit) * warm);
-      }
-      mesh.setColorAt(i, c);
-    }
-    mesh.instanceColor.needsUpdate = true;
   }
 
   updateBalance(dt, t) {
@@ -836,15 +662,12 @@ export class SlotMachine {
       });
     }
 
-    // The readout floats: gentle bob, and it counter-rotates so it stays legible.
+    // The readout floats above the cabinet and counter-rotates to stay legible.
     const s = this.balanceSprite;
-    s.position.y = 3.30 + Math.sin(t * 1.35) * 0.055 + this.winGlow * 0.05;
-    s.scale.setScalar(1 + flash * 0.045 + this.winGlow * 0.03);
-    s.rotation.z = -this.root.rotation.z * 0.55;
-    s.rotation.y = -this.root.rotation.y * 0.42;
-    s.rotation.x = -this.root.rotation.x * 0.3;
-    this.balanceHalo.rotation.copy(s.rotation);
-    this.balanceHalo.position.y = s.position.y;
-    this.balanceHalo.material.opacity = 0.5 + 0.12 * Math.sin(t * 1.6) + flash * 0.4;
+    s.position.y = 3.26 + Math.sin(t * 1.2) * 0.028 + this.winGlow * 0.03;
+    s.scale.setScalar(1 + flash * 0.03 + this.winGlow * 0.02);
+    s.rotation.z = -this.root.rotation.z * 0.7;
+    s.rotation.y = -this.root.rotation.y * 0.55;
+    s.rotation.x = -this.root.rotation.x * 0.4;
   }
 }

@@ -71,7 +71,7 @@ const res = await page.evaluate(() => ({
   busted: window.__slots.game.busted,
   cls: document.body.classList.contains('busted'),
 }));
-check('reset restores $100 and clears the run',
+check('reset restores 100 and clears the run',
   res.balance === 100 && res.spins === 0 && !res.busted && !res.cls,
   JSON.stringify(res));
 
@@ -84,7 +84,7 @@ const bust = await page.evaluate(() => ({
   statusShown: getComputedStyle(document.getElementById('status')).display !== 'none',
   bet: window.__slots.game.bet,
 }));
-check('going broke shows the out-of-credit state',
+check('going broke shows the out-of-stardust state',
   bust.busted && bust.cls && bust.statusShown, JSON.stringify(bust));
 
 await page.click('#reset');

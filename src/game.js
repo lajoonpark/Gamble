@@ -5,25 +5,30 @@ export const BET_FRACTION = 0.1;
 export const MIN_BET = 0.01;
 export const BUST_LIMIT = 1;
 
-export const SYMBOL_IDS = ['cherry', 'lemon', 'bell', 'bar', 'diamond', 'seven'];
+export const SYMBOL_IDS = ['asteroid', 'comet', 'crescent', 'planet', 'nebula', 'singularity'];
 
-// `accent` drives the emissive material and its bloom, `ink` the highlight.
+// Rarity reads as brightness: dim slate for the common rock, ice-white for the
+// jackpot. Keeping the palette monochrome means the reel's contrast carries the
+// whole hierarchy.
 export const SYMBOLS = {
-  cherry:  { name: 'Cherry',  accent: '#ff1f4d', ink: '#ff9db0', glyph: 'cherry' },
-  lemon:   { name: 'Lemon',   accent: '#ffe02a', ink: '#fff6a8', glyph: 'lemon' },
-  bell:    { name: 'Bell',    accent: '#ffa214', ink: '#ffd88a', glyph: 'bell' },
-  bar:     { name: 'Bar',     accent: '#ffd98a', ink: '#ffffff', glyph: 'bar' },
-  diamond: { name: 'Diamond', accent: '#28dcff', ink: '#b6f6ff', glyph: 'diamond' },
-  seven:   { name: 'Seven',   accent: '#ff1030', ink: '#ff8d9c', glyph: 'seven' },
+  asteroid:    { name: 'Asteroid',    accent: '#6c7c91', ink: '#aab8c9', glyph: 'asteroid' },
+  comet:       { name: 'Comet',       accent: '#7fa6cf', ink: '#c8dcf2', glyph: 'comet' },
+  crescent:    { name: 'Crescent',    accent: '#9db6d2', ink: '#e2edfa', glyph: 'crescent' },
+  planet:      { name: 'Planet',      accent: '#4f80bd', ink: '#b9d4f0', glyph: 'planet' },
+  nebula:      { name: 'Nebula',      accent: '#5f9cff', ink: '#c9e0ff', glyph: 'nebula' },
+  singularity: { name: 'Singularity', accent: '#dfeeff', ink: '#ffffff', glyph: 'singularity' },
 };
+
+/** Currency: stardust. Fractional by nature, so a 10% bet is always clean. */
+export const UNIT = '\u2726';
 
 // Physical reel strips: the drum mesh renders these exact stops, so the
 // result you see is the result the RNG rolled. Each strip is 12 long and
 // deliberately skewed (4 cherries per reel, rarer gems) for a ~52% hit rate.
 export const STRIPS = [
-  ['cherry', 'lemon', 'bell', 'cherry', 'bar', 'lemon', 'cherry', 'diamond', 'bar', 'cherry', 'bell', 'seven'],
-  ['lemon', 'cherry', 'bar', 'bell', 'cherry', 'seven', 'lemon', 'cherry', 'diamond', 'bar', 'bell', 'cherry'],
-  ['cherry', 'bell', 'lemon', 'bar', 'cherry', 'diamond', 'seven', 'lemon', 'bell', 'cherry', 'bar', 'cherry'],
+  ['asteroid', 'comet', 'crescent', 'asteroid', 'planet', 'comet', 'asteroid', 'nebula', 'planet', 'asteroid', 'crescent', 'singularity'],
+  ['comet', 'asteroid', 'planet', 'crescent', 'asteroid', 'singularity', 'comet', 'asteroid', 'nebula', 'planet', 'crescent', 'asteroid'],
+  ['asteroid', 'crescent', 'comet', 'planet', 'asteroid', 'nebula', 'singularity', 'comet', 'crescent', 'asteroid', 'planet', 'asteroid'],
 ];
 
 export const STRIP_LENGTH = STRIPS[0].length;
@@ -31,12 +36,12 @@ export const STRIP_LENGTH = STRIPS[0].length;
 // Multipliers apply to the bet and pay gross (the bet is already deducted).
 // Measured over all 1728 outcomes: 52.1% hit rate, 96.7% RTP.
 export const PAYTABLE = {
-  three: { cherry: 3, lemon: 8, bell: 14, bar: 22, diamond: 45, seven: 106 },
+  three: { asteroid: 3, comet: 8, crescent: 14, planet: 22, nebula: 45, singularity: 106 },
   pair: 1.2,
 };
 
 // Symbols that make the third reel crawl and glow when two line up.
-export const ANTICIPATION_SYMBOLS = new Set(['bell', 'bar', 'diamond', 'seven']);
+export const ANTICIPATION_SYMBOLS = new Set(['crescent', 'planet', 'nebula', 'singularity']);
 
 export function round2(n) {
   return Math.round(n * 100) / 100;
@@ -66,13 +71,13 @@ export function isAnticipation(line) {
   return line[0] === line[1] && ANTICIPATION_SYMBOLS.has(line[0]) && line[1] !== line[2];
 }
 
-export function money(n, dp = 2) {
+export function dust(n, dp = 2) {
   const v = Math.abs(n);
   const sign = n < 0 ? '-' : '';
-  if (v >= 1e9) return `${sign}$${(v / 1e9).toFixed(2)}B`;
-  if (v >= 1e6) return `${sign}$${(v / 1e6).toFixed(2)}M`;
-  if (v >= 1e5) return `${sign}$${Math.round(v).toLocaleString('en-US')}`;
-  return `${sign}$${v.toFixed(dp)}`;
+  if (v >= 1e9) return `${sign}${(v / 1e9).toFixed(2)}B`;
+  if (v >= 1e6) return `${sign}${(v / 1e6).toFixed(2)}M`;
+  if (v >= 1e5) return `${sign}${Math.round(v).toLocaleString('en-US')}`;
+  return `${sign}${v.toFixed(dp)}`;
 }
 
 export class SlotGame {
@@ -165,7 +170,7 @@ export const memoryStore = () => {
   return { load: () => data, save: (d) => { data = { ...d }; } };
 };
 
-export const localStore = (key = 'gamble.slot.v1') => ({
+export const localStore = (key = 'gamble.slot.v2') => ({
   load: () => {
     try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; }
   },

@@ -4,7 +4,7 @@ import { SlotMachine } from './machine.js';
 import { Effects } from './effects.js';
 import { Tweens, clamp, easeOutQuart } from './util.js';
 import {
-  SlotGame, localStore, money, START_BALANCE, SYMBOLS,
+  SlotGame, localStore, dust, START_BALANCE, SYMBOLS,
   STRIPS, STRIP_LENGTH, evaluate,
 } from './game.js';
 import { bannerTexture } from './textures.js';
@@ -46,8 +46,8 @@ function makeBanner() {
   const mat = new THREE.MeshBasicMaterial({
     map: tex, transparent: true, toneMapped: false, depthWrite: false, opacity: 0,
   });
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(3.5, 1.05), mat);
-  mesh.position.set(0, -1.30, 1.62);
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2.7, 0.81), mat);
+  mesh.position.set(0, 0.42, 1.5);
   mesh.visible = false;
   stage.scene.add(mesh);
   banner = { mesh, mat, tex };
@@ -58,7 +58,7 @@ function showBanner(text, sub, color, dur = 1.7) {
   banner.mat.map.dispose();
   banner.mat.map = bannerTexture(text, sub, color);
   banner.mesh.visible = true;
-  banner.baseY = -1.30;
+  banner.baseY = 0.42;
 
   if (bannerTimer) bannerTimer.done = true;
   bannerTimer = tweens.add({
@@ -82,19 +82,19 @@ function showBanner(text, sub, color, dur = 1.7) {
 function showBalance(balance, bet, busted) {
   machine.setBalance(balance, bet, busted);
   document.body.classList.toggle('busted', busted);
-  hud.status.textContent = busted ? 'OUT OF CREDIT' : '';
-  if (busted) hud.hint.textContent = 'Press Reset (R) to start again with $100';
+  hud.status.textContent = busted ? 'OUT OF STARDUST' : '';
+  if (busted) hud.hint.textContent = 'Press Reset (R) to start again with 100 stardust';
 }
 
 function setHud() {
   const busted = game.busted;
   hud.spins.textContent = String(game.spins);
-  hud.peak.textContent = money(game.bestSeen, 0);
+  hud.peak.textContent = dust(game.bestSeen, 0);
   document.body.classList.toggle('busted', busted);
-  hud.status.textContent = busted ? 'OUT OF CREDIT' : '';
+  hud.status.textContent = busted ? 'OUT OF STARDUST' : '';
   machine.setBalance(game.balance, game.bet, busted);
   if (busted) {
-    hud.hint.textContent = 'Press Reset (R) to start again with $100';
+    hud.hint.textContent = 'Press Reset (R) to start again with 100 stardust';
   } else {
     hud.hint.textContent = 'Click the machine, pull the lever, or press Space';
   }
@@ -123,8 +123,8 @@ async function pull() {
 
   machine.pullLever();
   effects.sparkBurst({
-    count: 26, color: '#ff9db0', power: 0.9,
-    at: new THREE.Vector3(2.9, 2.4, 1.0), size: 0.2, ttl: 0.7,
+    count: 22, color: '#cfe4ff', power: 0.85,
+    at: new THREE.Vector3(2.7, 2.3, 1.0), size: 0.17, ttl: 0.65,
   });
   tweens.add({ dur: 0.34, from: 0, to: 1, ease: easeOutQuart, onUpdate: (v) => { stage.setExcite(v); } });
 
@@ -143,7 +143,7 @@ async function spinReels(result) {
   if (anticipation) {
     // Hold the glow before the third reel drops.
     machine.excite = 1;
-    effects.sparkBurst({ count: 30, color: '#ffe27a', power: 0.7, ttl: 1.4 });
+    effects.sparkBurst({ count: 26, color: '#dfeeff', power: 0.65, ttl: 1.4 });
   }
   await machine.spin({
     stops: result.stops,
@@ -155,7 +155,7 @@ async function spinReels(result) {
 machine.onReelLand = (i, teased) => {
   effects.landPuff(i);
   stage.impact(teased ? 1.5 : 0.8 + i * 0.12);
-  if (teased) effects.screenFlash('#fff0b0', 0.12, 0.35);
+  if (teased) effects.screenFlash('#dfeeff', 0.08, 0.35);
 };
 
 async function resolve(result) {
@@ -193,20 +193,20 @@ async function resolve(result) {
 
   if (tier === 'jackpot') {
     effects.jackpot();
-    showBanner('JACKPOT!', `${money(result.gross)}  ·  ${mult}×`, '#fff0a0', 2.8);
+    showBanner('JACKPOT', `${dust(result.gross)}  ·  ${mult}x`, '#ffd9a0', 2.8);
     await wait(0.65);
-    effects.coinSpray(2.2, 150);
+    effects.dustSpray(2.0, 140);
   } else if (tier === 'big') {
     effects.bigWin();
-    showBanner('BIG WIN', `${money(result.gross)}  ·  ${mult}×`, '#ffe27a', 2.1);
+    showBanner('BIG WIN', `${dust(result.gross)}  ·  ${mult}x`, '#dfeeff', 2.1);
     await wait(0.35);
   } else if (tier === 'medium') {
     effects.mediumWin();
-    showBanner(`3× ${sym.name.toUpperCase()}`, `${money(result.gross)}  ·  ${mult}×`, sym.accent, 1.7);
+    showBanner(`3 ${sym.name.toUpperCase()}`, `${dust(result.gross)}  ·  ${mult}x`, sym.accent, 1.7);
     await wait(0.25);
   } else {
     effects.smallWin();
-    showBanner(isThree ? `3× ${sym.name.toUpperCase()}` : 'PAIR', `+${money(result.gross)}`, sym.accent, 1.25);
+    showBanner(isThree ? `3 ${sym.name.toUpperCase()}` : 'PAIR', `+${dust(result.gross)}`, sym.accent, 1.25);
     await wait(0.18);
   }
 
@@ -215,8 +215,8 @@ async function resolve(result) {
 }
 
 function bustOut() {
-  showBanner('BUSTED', 'PRESS RESET', '#ff4060', 2.2);
-  effects.screenFlash('#ff2040', 0.18, 0.5);
+  showBanner('EMPTY', 'PRESS RESET', '#ff8fa0', 2.2);
+  effects.screenFlash('#ff6a80', 0.12, 0.5);
   document.body.classList.add('busted');
   hud.status.textContent = 'OUT OF CREDIT';
 }
@@ -228,9 +228,9 @@ function wait(sec) {
 function resetGame() {
   game.reset(START_BALANCE);
   setHud();
-  machine.flashBalance('#7ce8ff');
-  effects.ring({ color: 0x7ce8ff, dur: 0.8, scale: 4.2 });
-  showBanner('$100', 'GOOD LUCK', '#7ce8ff', 1.3);
+  machine.flashBalance('#5f9cff');
+  effects.ring({ color: 0xdfeeff, dur: 0.8, scale: 4.2 });
+  showBanner('100', 'WELCOME BACK', '#5f9cff', 1.3);
 }
 
 // ------------------------------------------------------------- input
@@ -280,6 +280,91 @@ window.addEventListener('keydown', (e) => {
     document.body.classList.toggle('chrome-hidden');
   }
 });
+
+// ------------------------------------------------------------------ rest
+
+/**
+ * A wallpaper must not burn a laptop all afternoon. Three signals stop the
+ * render loop:
+ *   - the page is hidden (another Space / another tab),
+ *   - a window covers most of the work area,
+ *   - the battery is low and unplugged.
+ * Occlusion is approximated from the browser's own visibility plus a mouse-over
+ * test: browsers do not expose another app's window rects to a web page, so we
+ * treat "the pointer is over someone else's window and has been idle" as
+ * covered. `navigator.getBattery` covers the low-power case where supported.
+ */
+const REST = {
+  covered: false,      // >80% of the screen is behind another window
+  lowPower: false,     // on battery and low, or user has reduced motion
+  hidden: false,       // tab/window not visible
+  paused: false,
+  reason: '',
+};
+
+let wakeLock = null;
+
+async function requestWakeLock() {
+  if (!('wakeLock' in navigator) || REST.lowPower) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => { wakeLock = null; });
+  } catch { /* not permitted; keep running without it */ }
+}
+
+async function watchBattery() {
+  if (!navigator.getBattery) return;
+  try {
+    const bat = await navigator.getBattery();
+    const read = () => {
+      REST.lowPower = !bat.charging && bat.level <= 0.2;
+      applyRest();
+    };
+    bat.addEventListener('levelchange', read);
+    bat.addEventListener('chargingchange', read);
+    read();
+  } catch { /* unsupported */ }
+}
+
+function applyRest() {
+  const paused = REST.covered || REST.hidden || REST.lowPower;
+  REST.paused = paused;
+  REST.reason = REST.hidden ? 'hidden'
+    : REST.covered ? 'covered'
+      : REST.lowPower ? 'low power' : '';
+  document.body.classList.toggle('resting', paused);
+  if (paused) {
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  } else {
+    requestWakeLock();
+  }
+}
+
+/**
+ * The page cannot see other applications' windows, but it can tell when the
+ * pointer is somewhere other than this window. Combined with a lack of input
+ * for a while, that is the best available "another window is on top" signal.
+ */
+let pointerInside = true;
+window.addEventListener('pointerenter', () => { pointerInside = true; });
+window.addEventListener('pointerleave', () => { pointerInside = false; });
+document.addEventListener('mouseout', (e) => {
+  if (!e.relatedTarget) pointerInside = false;
+});
+
+document.addEventListener('visibilitychange', () => {
+  REST.hidden = document.visibilityState !== 'visible';
+  applyRest();
+});
+
+// Without an experimental API there is no true coverage figure, so treat a
+// long-idle pointer outside this window as "covered" rather than guessing.
+const COVERED_AFTER = 45;
+let outsideFor = 0;
+
+watchBattery();
+requestWakeLock();
+applyRest();
 
 // ------------------------------------------------------------------ attract
 
@@ -334,21 +419,46 @@ async function attract() {
         : line.map((s2, i) => (s2 === outcome.symbol ? i : -1)).filter((i) => i >= 0),
       sym.accent,
     );
-    effects.sparkBurst({ color: sym.accent, power: 0.7, count: 40 });
+    effects.sparkBurst({ color: sym.accent, power: 0.7, count: 36 });
   }
   attractSpin = null;
 }
 
 // ------------------------------------------------------------------ loop
 
-let last = performance.now();
+// `last` starts null rather than at performance.now(): the first rAF timestamp
+// is taken against a different origin and can be *earlier* than a timestamp
+// sampled at module evaluation, which yields a negative dt and sends every
+// damp() and tween backwards.
+let last = null;
 let elapsed = 0;
 
 function frame(now) {
-  const dtRaw = (now - last) / 1000;
+  if (last === null) {
+    last = now;
+    requestAnimationFrame(frame);
+    return;
+  }
+
+  // Clamp both ends: negative dt would run the simulation backwards, and a huge
+  // one (after a pause or a tab switch) would teleport every animation.
+  const dt = Math.min(Math.max((now - last) / 1000, 0), 1 / 20);
   last = now;
-  const dt = Math.min(dtRaw, 1 / 20);
+
+  if (REST.paused) {
+    // Idle repaint only: no simulation, no compositing work.
+    requestAnimationFrame(frame);
+    return;
+  }
+
   elapsed += dt;
+
+  outsideFor = pointerInside ? 0 : outsideFor + dt;
+  const covered = outsideFor > COVERED_AFTER;
+  if (covered !== REST.covered) {
+    REST.covered = covered;
+    applyRest();
+  }
 
   idleFor += dt;
   if (idleFor > IDLE_AFTER && !busy && !attractSpin && game.ready) {
@@ -385,4 +495,4 @@ if (AUTOPLAY) {
   loop();
 }
 
-window.__slots = { game, machine, stage, effects, pull, resetGame, setHud, showBalance, attract, tweens };
+window.__slots = { game, machine, stage, effects, pull, resetGame, setHud, showBalance, showBanner, attract, tweens, REST };

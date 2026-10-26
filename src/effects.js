@@ -1,16 +1,24 @@
 import * as THREE from 'three';
-import { coinTexture, glowTexture } from './textures.js';
+import { moteTexture, glowTexture } from './textures.js';
 import { clamp } from './util.js';
 
 const tmp = new THREE.Object3D();
 const tmpColor = new THREE.Color();
 
+// Wins celebrate in light, not colour: ice-white cores with a single amber
+// accent reserved for the jackpot. That keeps the palette monochrome while
+// still giving each tier a distinct feel.
+const ICE = '#dfeeff';
+const COLD = '#8fb9ff';
+const ACCENT = '#5f9cff';
+const AMBER = '#ffd9a0';
+
 /**
  * One pooled Points system per look so we never allocate during a spin.
- * Each particle: p (pos), v (vel), life, ttl, size, spin, hue.
+ * Each particle: p (pos), v (vel), life, ttl, size, gravity, drag.
  */
 export class Particles {
-  constructor({ count = 420, map, blending = THREE.AdditiveBlending, sizeAttenuation = true } = {}) {
+  constructor({ count = 420, map, blending = THREE.AdditiveBlending } = {}) {
     this.count = count;
     this.pos = new Float32Array(count * 3);
     this.vel = new Float32Array(count * 3);
@@ -119,15 +127,19 @@ export class Particles {
   }
 }
 
-/** Coin fountain that bursts from the machine and falls under gravity. */
-export class CoinBurst {
-  constructor({ max = 260, origin = new THREE.Vector3(0, -1.3, 1.2) } = {}) {
+/**
+ * Stardust: a drifting swarm of tiny lit motes rather than a coin fountain.
+ * They rise, slow, and settle — the visual language of a win is "the air fills
+ * with light", not "money falls out".
+ */
+export class DustSwarm {
+  constructor({ max = 320, origin = new THREE.Vector3(0, -1.2, 1.0) } = {}) {
     this.origin = origin.clone();
     this.mesh = new THREE.InstancedMesh(
-      new THREE.PlaneGeometry(0.3, 0.3),
+      new THREE.PlaneGeometry(0.16, 0.16),
       new THREE.MeshBasicMaterial({
-        map: coinTexture(), transparent: true, depthWrite: false, toneMapped: false,
-        blending: THREE.NormalBlending, side: THREE.DoubleSide,
+        map: moteTexture(), transparent: true, depthWrite: false, toneMapped: false,
+        blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
       }),
       max,
     );
@@ -135,8 +147,14 @@ export class CoinBurst {
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.max = max;
     this.items = Array.from({ length: max }, () => ({
-      active: false, p: new THREE.Vector3(), v: new THREE.Vector3(),
-      rx: 0, ry: 0, wx: 0, wy: 0, life: 0, ttl: 1, scale: 1,
+      active: false,
+      p: new THREE.Vector3(),
+      v: new THREE.Vector3(),
+      spin: 0,
+      w: 0,
+      life: 0,
+      ttl: 1,
+      scale: 1,
     }));
     this.cursor = 0;
     this.hideAll();
@@ -152,32 +170,35 @@ export class CoinBurst {
     this.mesh.instanceMatrix.needsUpdate = true;
   }
 
-  burst({ count = 90, power = 1, spread = 2.2, origin = null, up = 7.4, size = 1 }) {
+  burst({ count = 90, power = 1, spread = 2.2, origin = null, lift = 2.4, size = 1 }) {
     const o = origin ?? this.origin;
     for (let n = 0; n < count; n++) {
       const it = this.items[this.cursor];
       this.cursor = (this.cursor + 1) % this.max;
       it.active = true;
       it.p.copy(o);
-      it.p.x += (Math.random() - 0.5) * spread * 0.5;
-      it.p.y += (Math.random() - 0.5) * 0.12;
+      it.p.x += (Math.random() - 0.5) * spread * 0.55;
+      it.p.y += (Math.random() - 0.5) * 0.3;
+      // Mostly outward and up, with a little depth.
+      const a = Math.random() * Math.PI * 2;
+      const spin = (0.5 + Math.random() * 1.6) * power;
       it.v.set(
-        (Math.random() - 0.5) * 5.4 * power,
-        (0.45 + Math.random() * 0.85) * up * power * 0.42,
-        (Math.random() * 0.8 + 0.1) * 2.4 * power,
+        Math.cos(a) * spin,
+        Math.sin(a) * spin * 0.55 + (0.6 + Math.random() * 0.8) * lift,
+        (Math.random() * 0.7 + 0.1) * 1.2,
       );
-      it.rx = Math.random() * Math.PI * 2;
-      it.ry = Math.random() * Math.PI * 2;
-      it.wx = (Math.random() - 0.5) * 16;
-      it.wy = (Math.random() - 0.5) * 16;
+      it.spin = Math.random() * Math.PI * 2;
+      it.w = (Math.random() - 0.5) * 5;
       it.life = 0;
-      it.ttl = 1.5 + Math.random() * 1.1;
-      it.scale = size * (0.62 + Math.random() * 0.6);
+      // Long, slow lifetimes: motes should hang in the air, not fall.
+      it.ttl = 1.8 + Math.random() * 1.8;
+      it.scale = size * (0.5 + Math.random() * 0.9);
     }
   }
 
-  update(dt, carry = null) {
-    const g = -13.5;
+  update(dt) {
+    // Barely any gravity and heavy drag: dust drifts and settles.
+    const g = -1.1;
     for (let i = 0; i < this.max; i++) {
       const it = this.items[i];
       if (!it.active) continue;
@@ -191,16 +212,16 @@ export class CoinBurst {
         continue;
       }
       it.v.y += g * dt;
-      it.v.multiplyScalar(Math.exp(-0.55 * dt));
+      it.v.multiplyScalar(Math.exp(-1.35 * dt));
       it.p.addScaledVector(it.v, dt);
-      it.rx += it.wx * dt;
-      it.ry += it.wy * dt;
+      it.spin += it.w * dt;
 
       const k = it.life / it.ttl;
-      const fade = k > 0.78 ? 1 - (k - 0.78) / 0.22 : 1;
+      const pop = k < 0.1 ? k / 0.1 : 1;
+      const fade = k > 0.6 ? 1 - (k - 0.6) / 0.4 : 1;
       tmp.position.copy(it.p);
-      tmp.rotation.set(it.rx, it.ry, 0);
-      tmp.scale.setScalar(it.scale * fade);
+      tmp.rotation.set(0, 0, it.spin);
+      tmp.scale.setScalar(it.scale * pop * fade);
       tmp.updateMatrix();
       this.mesh.setMatrixAt(i, tmp.matrix);
     }
@@ -208,48 +229,51 @@ export class CoinBurst {
   }
 }
 
-/** Full effects rig: sparks, coin spray, screen flash and shockwave rings. */
+/** Full effects rig: sparks, dust, screen flash and shockwave rings. */
 export class Effects {
   constructor(scene, machine) {
     this.scene = scene;
     this.machine = machine;
 
     this.sparks = new Particles({
-      count: 500,
+      count: 520,
       map: glowTexture('rgba(255,255,255,1)', 'rgba(255,255,255,0)', 128),
     });
     scene.add(this.sparks.points);
 
     this.dust = new Particles({
-      count: 220,
-      map: glowTexture('rgba(255,235,255,1)', 'rgba(255,180,240,0)', 128),
+      count: 240,
+      map: glowTexture('rgba(235,245,255,1)', 'rgba(150,190,255,0)', 128),
       blending: THREE.NormalBlending,
     });
     scene.add(this.dust.points);
 
-    this.coins = new CoinBurst();
-    scene.add(this.coins.mesh);
+    this.swarm = new DustSwarm();
+    scene.add(this.swarm.mesh);
 
     this.rings = [];
     for (let i = 0; i < 4; i++) {
       const ring = new THREE.Mesh(
-        new THREE.RingGeometry(0.92, 1.0, 72),
+        new THREE.RingGeometry(0.96, 1.0, 128),
         new THREE.MeshBasicMaterial({
-          color: 0xffd75e, transparent: true, opacity: 0,
+          color: 0xdfeeff, transparent: true, opacity: 0,
           blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
           side: THREE.DoubleSide,
         }),
       );
-      ring.position.set(0, 0.3, 1.05);
+      // Squashed to a wide ellipse so it reads as light sweeping across the
+      // payline rather than a circle drawn on the glass.
+      ring.scale.y = 0.16;
+      ring.position.set(0, 0.42, 1.05);
       ring.visible = false;
       scene.add(ring);
-      this.rings.push({ mesh: ring, t: 0, active: false, dur: 1 });
+      this.rings.push({ mesh: ring, t: 0, active: false, dur: 1, scale: 1 });
     }
 
     this.flash = new THREE.Mesh(
       new THREE.PlaneGeometry(60, 40),
       new THREE.MeshBasicMaterial({
-        color: 0xffffff, transparent: true, opacity: 0,
+        color: 0xdfeeff, transparent: true, opacity: 0,
         blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
       }),
     );
@@ -260,11 +284,7 @@ export class Effects {
     this.lingering = 0;
   }
 
-  screenPoint(x, y, z = 1.2) {
-    return new THREE.Vector3(x, y, z);
-  }
-
-  ring({ color = 0xffd75e, dur = 0.9, scale = 4.5 } = {}) {
+  ring({ color = 0xdfeeff, dur = 0.9, scale = 1.6 } = {}) {
     const r = this.rings.find((x) => !x.active) ?? this.rings[0];
     r.active = true;
     r.t = 0;
@@ -272,59 +292,60 @@ export class Effects {
     r.scale = scale;
     r.mesh.visible = true;
     r.mesh.material.color.set(color);
-    r.mesh.material.opacity = 0.85;
+    r.mesh.material.opacity = 0.34;
   }
 
-  coinSpray(power = 1, count = 90) {
-    this.coins.burst({
+  dustSpray(power = 1, count = 90) {
+    this.swarm.burst({
       count: Math.round(count),
       power,
-      origin: new THREE.Vector3(0, -1.5, 1.15),
-      up: 7.2,
+      origin: new THREE.Vector3(0, -1.6, 1.05),
+      spread: 2.4,
+      lift: 2.6 * power,
     });
   }
 
-  sparkBurst({ count = 60, color = '#ffd75e', power = 1, at = null, size = 0.26, ttl = 1.1 } = {}) {
+  sparkBurst({ count = 60, color = ICE, power = 1, at = null, size = 0.26, ttl = 1.1 } = {}) {
     const o = at ?? new THREE.Vector3(0, 0.28, 1.2);
     for (let i = 0; i < count; i++) {
       const a = Math.random() * Math.PI * 2;
-      const s = (0.8 + Math.random() * 3.4) * power;
+      const s = (0.8 + Math.random() * 3.0) * power;
       this.sparks.spawn({
         x: o.x + (Math.random() - 0.5) * 1.6,
         y: o.y + (Math.random() - 0.5) * 0.8,
         z: o.z + Math.random() * 0.5,
         vx: Math.cos(a) * s,
-        vy: Math.sin(a) * s * 0.8 + 1.2 * power,
-        vz: 0.6 + Math.random() * 1.4,
+        vy: Math.sin(a) * s * 0.8 + 1.1 * power,
+        vz: 0.6 + Math.random() * 1.3,
         color,
-        size: size * (0.55 + Math.random() * 0.9),
+        size: size * (0.5 + Math.random() * 0.85),
         ttl: ttl * (0.65 + Math.random() * 0.7),
-        gravity: -2.2,
-        drag: 1.6,
+        gravity: -2.0,
+        drag: 1.7,
       });
     }
   }
 
   /** Reel landing puff. */
   landPuff(i) {
-    const x = -1.12 + i * 1.12;
-    for (let n = 0; n < 16; n++) {
+    const x = -1.16 + i * 1.16;
+    for (let n = 0; n < 14; n++) {
       this.dust.spawn({
-        x: x + (Math.random() - 0.5) * 0.7,
-        y: 0.28 + (Math.random() - 0.5) * 1.0,
+        x: x + (Math.random() - 0.5) * 0.6,
+        y: 0.28 + (Math.random() - 0.5) * 0.9,
         z: 1.0,
-        vx: (Math.random() - 0.5) * 1.2,
-        vy: (Math.random() - 0.5) * 0.7,
-        vz: 0.4 + Math.random() * 0.5,
-        color: '#c9a6ff',
-        size: 0.16 + Math.random() * 0.3,
-        ttl: 0.6 + Math.random() * 0.5,
+        vx: (Math.random() - 0.5) * 1.0,
+        vy: (Math.random() - 0.5) * 0.6,
+        vz: 0.4 + Math.random() * 0.4,
+        color: COLD,
+        size: 0.12 + Math.random() * 0.22,
+        ttl: 0.55 + Math.random() * 0.45,
         drag: 3.2,
       });
     }
   }
 
-  screenFlash(color = '#ffffff', amount = 0.35, dur = 0.45) {
+  screenFlash(color = '#ffffff', amount = 0.3, dur = 0.45) {
     this.flash.material.color.set(color);
     this.flashLevel = amount;
     this.flashDur = dur;
@@ -333,44 +354,45 @@ export class Effects {
   }
 
   smallWin() {
-    this.sparkBurst({ count: 40, color: '#ffd75e', power: 0.8, ttl: 0.9 });
-    this.screenFlash('#ffcf6a', 0.10, 0.3);
+    this.sparkBurst({ count: 34, color: ICE, power: 0.75, ttl: 0.9 });
+    this.screenFlash(COLD, 0.02, 0.28);
   }
 
   mediumWin() {
-    this.sparkBurst({ count: 90, color: '#ffd75e', power: 1.3 });
-    this.sparkBurst({ count: 40, color: '#ff5fd0', power: 1.1, at: new THREE.Vector3(0, 1.2, 1.0) });
-    this.coinSpray(1.0, 55);
-    this.ring({ color: 0xffd75e, dur: 0.85, scale: 5.0 });
-    this.screenFlash('#ffdf8a', 0.20, 0.4);
+    this.sparkBurst({ count: 80, color: ICE, power: 1.2 });
+    this.sparkBurst({ count: 30, color: COLD, power: 1.0, at: new THREE.Vector3(0, 1.2, 1.0) });
+    this.dustSpray(0.9, 45);
+    this.ring({ color: 0xdfeeff, dur: 0.8, scale: 1.4 });
+    this.screenFlash(ICE, 0.03, 0.34);
   }
 
   bigWin() {
-    this.sparkBurst({ count: 180, color: '#ffe27a', power: 2.1, ttl: 1.5 });
-    this.sparkBurst({ count: 90, color: '#7ce8ff', power: 1.8, at: new THREE.Vector3(-1.4, 0.6, 1.1) });
-    this.sparkBurst({ count: 90, color: '#ff5fd0', power: 1.8, at: new THREE.Vector3(1.4, 0.6, 1.1) });
-    this.coinSpray(1.75, 150);
-    this.ring({ color: 0xffe27a, dur: 1.0, scale: 7.5 });
-    this.ring({ color: 0x7ce8ff, dur: 1.35, scale: 9.5 });
-    this.screenFlash('#fff3c4', 0.42, 0.6);
+    this.sparkBurst({ count: 110, color: ICE, power: 1.7, ttl: 1.5, size: 0.19 });
+    this.sparkBurst({ count: 70, color: COLD, power: 1.6, at: new THREE.Vector3(-1.3, 0.6, 1.1) });
+    this.sparkBurst({ count: 70, color: ACCENT, power: 1.6, at: new THREE.Vector3(1.3, 0.6, 1.1) });
+    this.dustSpray(1.5, 130);
+    this.ring({ color: 0xdfeeff, dur: 0.9, scale: 1.7 });
+    this.ring({ color: 0x8fb9ff, dur: 1.2, scale: 2.2 });
+    this.screenFlash(ICE, 0.045, 0.45);
   }
 
   jackpot() {
-    this.sparkBurst({ count: 260, color: '#fff1a8', power: 2.8, ttl: 1.9, size: 0.32 });
+    this.sparkBurst({ count: 150, color: ICE, power: 2.0, ttl: 1.9, size: 0.2 });
+    this.sparkBurst({ count: 60, color: AMBER, power: 1.7, ttl: 2.0, size: 0.18 });
     for (let i = 0; i < 6; i++) {
-      setTimeout(() => this.coinSpray(2.0, 90), i * 170);
+      setTimeout(() => this.dustSpray(1.4, 34), i * 190);
     }
-    this.ring({ color: 0xffe27a, dur: 1.5, scale: 11 });
-    this.ring({ color: 0xff5fd0, dur: 1.9, scale: 14 });
-    this.ring({ color: 0x7ce8ff, dur: 2.3, scale: 17 });
-    this.screenFlash('#ffffff', 0.62, 0.9);
-    this.lingering = 1.6;
+    this.ring({ color: 0xdfeeff, dur: 1.0, scale: 1.9 });
+    this.ring({ color: 0x8fb9ff, dur: 1.35, scale: 2.4 });
+    this.ring({ color: 0xffd9a0, dur: 1.7, scale: 2.9 });
+    this.screenFlash(ICE, 0.06, 0.6);
+    this.lingering = 1.8;
   }
 
   update(dt) {
     this.sparks.update(dt);
     this.dust.update(dt);
-    this.coins.update(dt);
+    this.swarm.update(dt);
 
     for (const r of this.rings) {
       if (!r.active) continue;
@@ -381,9 +403,9 @@ export class Effects {
         r.mesh.visible = false;
         continue;
       }
-      const s = 0.4 + k * r.scale;
-      r.mesh.scale.setScalar(s);
-      r.mesh.material.opacity = 0.8 * (1 - k) ** 1.6;
+      const sc = 0.4 + k * r.scale;
+      r.mesh.scale.set(sc, sc * 0.16, 1);
+      r.mesh.material.opacity = 0.34 * (1 - k) ** 2.0;
     }
 
     if (this.flashLevel > 0) {
@@ -393,20 +415,21 @@ export class Effects {
       if (k >= 1) this.flashLevel = 0;
     }
 
+    // After a jackpot the air keeps glittering for a moment.
     if (this.lingering > 0) {
       this.lingering -= dt;
       if (Math.random() < 0.5) {
         this.sparks.spawn({
-          x: (Math.random() - 0.5) * 5,
+          x: (Math.random() - 0.5) * 4.6,
           y: 2.4 + Math.random() * 1.4,
           z: 0.8 + Math.random(),
-          vx: (Math.random() - 0.5) * 0.8,
-          vy: -0.6 - Math.random() * 0.9,
+          vx: (Math.random() - 0.5) * 0.7,
+          vy: -0.5 - Math.random() * 0.8,
           vz: 0,
-          color: Math.random() < 0.5 ? '#ffe27a' : '#7ce8ff',
-          size: 0.12 + Math.random() * 0.2,
-          ttl: 1.4,
-          gravity: -0.6,
+          color: Math.random() < 0.5 ? ICE : COLD,
+          size: 0.1 + Math.random() * 0.18,
+          ttl: 1.6,
+          gravity: -0.5,
           drag: 0.3,
         });
       }
