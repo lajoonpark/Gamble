@@ -56,8 +56,12 @@ jobs:
 
       # Force-push a single commit rather than accumulating deploy history: the
       # branch is pure output, and keeping every build would grow forever.
+      # GH_TOKEN must be passed explicitly — GITHUB_TOKEN is available to
+      # expressions, not to `run:` steps as an environment variable.
       - name: Publish to gh-pages
         working-directory: _site
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
           git init -q -b gh-pages
@@ -65,5 +69,5 @@ jobs:
           git -c user.name="github-actions[bot]" \
               -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
               commit -q -m "Deploy ${GITHUB_SHA::7}"
-          git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
           echo "published $(git rev-parse --short HEAD)"
