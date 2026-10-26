@@ -54,6 +54,7 @@ export class Stage {
     this.shakeDecay = 0;
 
     window.addEventListener('resize', () => this.resize());
+    this.watchPixelRatio();
     this.resize();
   }
 
@@ -396,11 +397,33 @@ export class Stage {
     this.bloomLevel = 0.42;
   }
 
+  /**
+   * Moving the window between a Retina and a non-Retina display changes
+   * devicePixelRatio without firing `resize`, so listen for it directly. The
+   * query embeds the current ratio, so it has to be rebuilt after each change.
+   */
+  watchPixelRatio() {
+    if (typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    const onChange = () => { this.resize(); this.watchPixelRatio(); };
+    if (mq.addEventListener) mq.addEventListener('change', onChange, { once: true });
+    else if (mq.addListener) mq.addListener(onChange);
+    this._ratioMq = mq;
+  }
+
   resize() {
     const w = this.container.clientWidth || window.innerWidth;
     const h = this.container.clientHeight || window.innerHeight;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    const dpr = Math.min(window.devicePixelRatio, 2) || 1;
+    this.renderer.setPixelRatio(dpr);
+    // `false` keeps three.js from writing inline styles, so the CSS size has to
+    // be set here. Without this the canvas lays out at its backing-store size
+    // (w*dpr by h*dpr) and a HiDPI display shows only the top-left quadrant,
+    // which reads as a huge unexplained zoom.
     this.renderer.setSize(w, h, false);
+    const canvas = this.renderer.domElement;
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
     this.composer.setSize(w, h);
     this.bloom.setSize(w, h);
     this.camera.aspect = w / h;

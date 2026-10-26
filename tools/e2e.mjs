@@ -4,15 +4,16 @@ import puppeteer from 'puppeteer-core';
 import { mkdir } from 'node:fs/promises';
 
 const URL_BASE = 'http://127.0.0.1:5173/index.html';
-const launch = () => puppeteer.launch({
+const launchWith = (deviceScaleFactor = 1) => puppeteer.launch({
   executablePath: '/usr/bin/chromium',
   headless: true,
   args: [
     '--no-sandbox', '--disable-gpu-sandbox', '--enable-unsafe-swiftshader',
     '--use-gl=angle', '--use-angle=swiftshader',
   ],
-  defaultViewport: { width: 1280, height: 820, deviceScaleFactor: 1 },
+  defaultViewport: { width: 1280, height: 820, deviceScaleFactor },
 });
+const launch = () => launchWith(1);
 
 const results = [];
 const check = (name, pass, detail = '') => {
@@ -116,7 +117,46 @@ const taken = await page.evaluate(() => ({ spins: window.__slots.game.spins }));
 check('clicking during the demo queues a real spin', taken.spins >= 1,
   `spins ${taken.spins}`);
 
-// --- 6. Console stays clean ----------------------------------------------
+// --- 6. HiDPI: the canvas must fill the viewport in CSS pixels -----------
+// Regression guard. `setSize(w, h, false)` leaves the canvas unstyled, so on a
+// Retina display it lays out at its backing-store size and shows only the
+// top-left quadrant — which reads as a huge, unexplained zoom. Every check above
+// runs at deviceScaleFactor 1, so only this one can catch it.
+{
+  const hidpi = await launchWith(2);
+  const hp = await hidpi.newPage();
+  await hp.setViewport({ width: 1720, height: 1000, deviceScaleFactor: 2 });
+  await hp.goto(URL_BASE, { waitUntil: 'networkidle2' });
+  await new Promise((r) => setTimeout(r, 3000));
+  const m = await hp.evaluate(() => {
+    const c = document.querySelector('#stage canvas');
+    const r = c.getBoundingClientRect();
+    return {
+      dpr: window.devicePixelRatio,
+      vw: window.innerWidth, vh: window.innerHeight,
+      cssW: Math.round(r.width), cssH: Math.round(r.height),
+      top: Math.round(r.top), left: Math.round(r.left),
+      backingW: c.width,
+      // Where the machine's base actually sits, as a fraction of the viewport.
+      baseY: (() => {
+        // Reuse an existing Vector3 so this needs no global THREE reference.
+        const cam = window.__slots.stage.camera;
+        const v = cam.position.clone().set(0, -1.35, 0);
+        v.project(cam);
+        return +((1 - v.y) / 2).toFixed(3);
+      })(),
+    };
+  });
+  await hp.screenshot({ path: 'shots/e2e-dpr2.png' });
+  await hidpi.close();
+  check('HiDPI canvas fills the viewport in CSS pixels',
+    m.dpr === 2 && m.cssW === m.vw && m.cssH === m.vh && m.top === 0 && m.left === 0,
+    `${m.cssW}x${m.cssH} css vs ${m.vw}x${m.vh} window (backing ${m.backingW}px, dpr ${m.dpr})`);
+  check('HiDPI framing keeps the machine on screen',
+    m.baseY > 0.5 && m.baseY < 0.98, `base at ${m.baseY} of viewport height`);
+}
+
+// --- 7. Console stays clean ----------------------------------------------
 check('no page errors, failed requests, or console errors',
   errors.length === 0, errors.slice(0, 3).join(' | '));
 
