@@ -18,6 +18,8 @@ brushed metal read as metal.
 
 ## Run it
 
+**Live:** https://lajoonpark.github.io/Gamble/ (deployed from `dev`)
+
 ```sh
 npm start            # http://127.0.0.1:5173
 ```
@@ -106,6 +108,31 @@ npm run e2e      # spin/reset/bust/attract/takeover + a clean console
 ```
 
 `tools/shot.mjs` grabs a screenshot through CDP for visual review.
+
+## Deploying
+
+`.github/workflows/pages.yml` publishes to GitHub Pages on every push to `dev`
+(and on manual dispatch). It copies only `index.html`, `favicon.svg`, `src/` and
+`vendor/` into the artifact — `tools/` is a local harness and `docs/` is README
+screenshots, so neither belongs on the site.
+
+A project site is served from **`/Gamble/`**, which is the one real trap here:
+any root-absolute path (`src="/vendor/..."`) resolves outside the site and 404s.
+The workflow fails the build if it finds one, so this cannot regress silently.
+Everything is relative today, and both the import map and vendor/ are relative
+too, which is why the build works from a subpath with no bundler and no base tag.
+
+Local `…/index.html` matters: the import map and module paths assume the page is
+loaded over http. Open it through `npm start`, not as a `file://` URL.
+
+Because the page is public, two behaviours change when it is served over https
+or from `*.github.io` (`HOSTED` in `src/main.js`):
+
+- The "covered" battery heuristic is switched off. It exists so a wallpaper can
+  park itself under your windows; on a page someone is reading, a pointer that
+  moves off it is not occlusion, and pausing there would just look broken.
+  Hidden-tab and low-battery pausing still apply.
+- A **Copy link** button appears in the HUD.
 
 ## Porting to an actual wallpaper
 

@@ -81,6 +81,12 @@
     width: max-content;
   }
 
+  .hud-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
   #reset {
     pointer-events: auto;
     appearance: none;
@@ -104,6 +110,35 @@
     background: rgba(16,23,34,.7);
   }
   #reset:active { transform: scale(.98); }
+
+  /* Only shown once the page is served over http(s): on a local file or dev
+     server there is no public URL worth sharing. */
+  #share {
+    display: none;
+    pointer-events: auto;
+    appearance: none;
+    cursor: pointer;
+    padding: 10px 22px;
+    border-radius: 999px;
+    font: 500 10px/1 "Inter", "SF Pro Text", -apple-system, Helvetica, Arial, sans-serif;
+    letter-spacing: .22em;
+    text-transform: uppercase;
+    color: var(--mute);
+    background: rgba(10,15,23,.5);
+    border: 1px solid var(--hair);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: color .25s, border-color .25s, background .25s, transform .18s;
+  }
+
+  #share:hover {
+    color: var(--ink);
+    border-color: rgba(126,147,173,.5);
+    background: rgba(16,23,34,.7);
+  }
+
+  #share:active { transform: scale(.98); }
+  body.hosted #share { display: inline-block; }
 
   .hint {
     font-size: 9px;
@@ -183,7 +218,10 @@
 
     <div class="hud-bottom">
       <div id="status">Out of stardust</div>
-      <button id="reset" type="button">Reset to 100</button>
+      <div class="hud-actions">
+        <button id="reset" type="button">Reset to 100</button>
+        <button id="share" type="button">Copy link</button>
+      </div>
       <div class="hint" id="hint">Click the machine, pull the lever, or press Space</div>
     </div>
   </div>

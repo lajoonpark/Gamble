@@ -34,6 +34,7 @@ const hud = {
   spins: document.getElementById('hud-spins'),
   peak: document.getElementById('hud-peak'),
   reset: document.getElementById('reset'),
+  share: document.getElementById('share'),
   status: document.getElementById('status'),
   hint: document.getElementById('hint'),
 };
@@ -270,6 +271,23 @@ hud.reset.addEventListener('click', (e) => {
   resetGame();
 });
 
+// Served over http(s) means there is a real URL to hand out; file:// and the
+// dev server do not. The class drives the button's visibility from CSS.
+const HOSTED = location.protocol === 'https:' || location.hostname.endsWith('github.io');
+if (HOSTED) document.body.classList.add('hosted');
+
+hud.share?.addEventListener('click', async (e) => {
+  e.stopPropagation();
+  const url = location.href.split('#')[0];
+  try {
+    await navigator.clipboard.writeText(url);
+    hud.share.textContent = 'Link copied';
+  } catch {
+    hud.share.textContent = 'Copy failed';
+  }
+  setTimeout(() => { hud.share.textContent = 'Copy link'; }, 1600);
+});
+
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Space' || e.code === 'Enter') {
     e.preventDefault();
@@ -453,11 +471,16 @@ function frame(now) {
 
   elapsed += dt;
 
-  outsideFor = pointerInside ? 0 : outsideFor + dt;
-  const covered = outsideFor > COVERED_AFTER;
-  if (covered !== REST.covered) {
-    REST.covered = covered;
-    applyRest();
+  // The coverage heuristic only makes sense for a wallpaper that is always
+  // underneath your work: a reader moving the pointer off a hosted page is not
+  // "covered", and pausing there would just look broken.
+  if (!HOSTED) {
+    outsideFor = pointerInside ? 0 : outsideFor + dt;
+    const covered = outsideFor > COVERED_AFTER;
+    if (covered !== REST.covered) {
+      REST.covered = covered;
+      applyRest();
+    }
   }
 
   idleFor += dt;

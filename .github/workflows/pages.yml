@@ -1,0 +1,66 @@
+name: Deploy to GitHub Pages
+
+# Publishing from `dev` rather than `main`: the site is developed there (and
+# `main` is still only a README, so deploying it would publish an empty site).
+# A project site is served from /<repo>/, so every asset path must stay
+# relative — index.html, the import map, and vendor/ all already are.
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never run two deploys at once, but do let a newer commit finish publishing.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # tools/ is the local test harness (puppeteer, screenshots) and has no
+      # business on the published site. docs/ holds the README screenshots, which
+      # GitHub renders from the repo rather than from the site — shipping them
+      # would add ~4 MB to the artifact for images no page requests.
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp -r index.html favicon.svg src vendor _site/
+          du -sh _site
+
+      - name: Sanity-check the bundle
+        run: |
+          set -e
+          test -f _site/index.html
+          test -f _site/src/main.js
+          test -d _site/vendor
+          # A root-absolute asset path silently 404s under /<repo>/, which is the
+          # one failure mode of a Pages project site. Fail the build instead.
+          if grep -rnE '(href|src)="/|from "/|import\("/' _site/index.html _site/src; then
+            echo "::error::root-absolute path found; project sites are served from a subpath"
+            exit 1
+          fi
+          echo "paths are relative"
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
