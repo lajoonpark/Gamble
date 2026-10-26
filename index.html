@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#2a0430" />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+<title>Lucky 7 — Slot Machine</title>
+<style>
+  :root {
+    --gold: #ffd75e;
+    --hot: #ff3fb0;
+    --ice: #6fe8ff;
+    font-family: "Avenir Next", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #12021f;
+    -webkit-font-smoothing: antialiased;
+    cursor: default;
+  }
+
+  #stage {
+    position: fixed;
+    inset: 0;
+  }
+
+  #stage canvas { display: block; }
+
+  /* --- floating HUD ------------------------------------------------- */
+
+  .hud {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+    transition: opacity .35s ease;
+  }
+
+  body.chrome-hidden .hud { opacity: 0; }
+
+  #session {
+    position: absolute;
+    top: 22px;
+    right: 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    font-size: 10px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: rgba(255,205,245,.42);
+  }
+
+  #session b {
+    color: rgba(255,232,180,.82);
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .hud-bottom {
+    position: absolute;
+    bottom: 26px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    width: max-content;
+  }
+
+  #reset {
+    pointer-events: auto;
+    appearance: none;
+    cursor: pointer;
+    padding: 11px 24px;
+    border-radius: 999px;
+    font: 800 12px/1 "Futura", "Avenir Next", Helvetica, Arial, sans-serif;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: #1d0326;
+    background: linear-gradient(180deg, #fff0b8, #ffc53d 55%, #f09000);
+    border: 1px solid rgba(255,255,255,.6);
+    box-shadow: 0 10px 26px rgba(255,150,20,.35), inset 0 1px 0 rgba(255,255,255,.85);
+    transition: transform .14s cubic-bezier(.2,.9,.3,1.4), box-shadow .2s, filter .2s;
+  }
+
+  #reset:hover { transform: translateY(-2px) scale(1.03); filter: brightness(1.06); }
+  #reset:active { transform: translateY(1px) scale(.98); }
+
+  .hint {
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: rgba(255,205,245,.45);
+    font-weight: 600;
+  }
+
+  #status {
+    display: none;
+    white-space: nowrap;
+    padding: 8px 22px;
+    border-radius: 999px;
+    background: rgba(40,3,14,.82);
+    border: 1px solid rgba(255,70,100,.55);
+    box-shadow: 0 0 30px rgba(255,40,80,.35), inset 0 1px 0 rgba(255,255,255,.1);
+    font: 800 12px/1 "Futura", "Avenir Next", Helvetica, Arial, sans-serif;
+    letter-spacing: .22em;
+    text-transform: uppercase;
+    color: #ff6079;
+    text-shadow: 0 0 18px rgba(255,40,80,.8);
+  }
+
+  body.busted #status { display: block; }
+
+  body.busted #reset {
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 10px 26px rgba(255,150,20,.35), inset 0 1px 0 rgba(255,255,255,.85); }
+    50% { box-shadow: 0 10px 40px rgba(255,190,60,.75), 0 0 0 6px rgba(255,190,60,.14), inset 0 1px 0 rgba(255,255,255,.95); }
+  }
+
+  .vignette {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 4;
+    background: radial-gradient(circle at 50% 45%, rgba(0,0,0,0) 42%, rgba(10,0,18,.55) 100%);
+  }
+
+  .loader {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    display: grid;
+    place-items: center;
+    background: #12021f;
+    color: rgba(255,200,240,.7);
+    font: 700 11px/1 "Avenir Next", Helvetica, Arial, sans-serif;
+    letter-spacing: .3em;
+    text-transform: uppercase;
+    transition: opacity .5s ease;
+  }
+
+  .loader.hide { opacity: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+  <div id="stage"></div>
+
+  <div class="vignette"></div>
+
+  <div class="hud">
+    <div id="session">
+      <div>Spins <b id="hud-spins">0</b></div>
+      <div>Peak <b id="hud-peak">$100</b></div>
+    </div>
+
+    <div class="hud-bottom">
+      <div id="status">Out of credit</div>
+      <button id="reset" type="button">Reset to $100</button>
+      <div class="hint" id="hint">Click the machine, pull the lever, or press Space</div>
+    </div>
+  </div>
+
+  <div class="loader" id="loader">Loading</div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three.module.js",
+      "three/addons/": "./vendor/addons/"
+    }
+  }
+  </script>
+  <script type="module">
+    import('./src/main.js').then(() => {
+      const l = document.getElementById('loader');
+      l.classList.add('hide');
+      setTimeout(() => l.remove(), 600);
+    }).catch((err) => {
+      console.error(err);
+      document.getElementById('loader').textContent = 'ERROR: ' + err.message;
+    });
+  </script>
+</body>
+</html>

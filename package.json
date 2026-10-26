@@ -1,0 +1,23 @@
+{
+  "name": "gamble",
+  "version": "1.0.0",
+  "description": "a three.js gambling slot machine as a Mac wallpaper. cause why not.",
+  "scripts": {
+    "start": "node tools/serve.mjs",
+    "sim": "node tools/sim.mjs",
+    "check": "node --experimental-vm-modules tools/check.mjs",
+    "verify": "node tools/verify.mjs",
+    "e2e": "node tools/e2e.mjs",
+    "shot": "node tools/shoot.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lajoonpark/Gamble.git"
+  },
+  "license": "MIT",
+  "type": "module",
+  "devDependencies": {
+    "puppeteer-core": "^23.11.1"
+  },
+  "private": true
+}
