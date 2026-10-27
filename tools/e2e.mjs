@@ -3,10 +3,14 @@
 import puppeteer from 'puppeteer-core';
 import { mkdir } from 'node:fs/promises';
 
-const URL_BASE = 'http://127.0.0.1:5173/index.html';
+// `sky=off` skips the black-hole pass for the suite: its shader integrates
+// a geodesic per pixel, and software GL in CI runs that at seconds per frame.
+// sky-check.mjs covers the pass at full quality, so no coverage is lost.
+const URL_BASE = 'http://127.0.0.1:5173/index.html?sky=off';
 const launchWith = (deviceScaleFactor = 1) => puppeteer.launch({
   executablePath: '/usr/bin/chromium',
   headless: true,
+  protocolTimeout: 600000,
   args: [
     '--no-sandbox', '--disable-gpu-sandbox', '--enable-unsafe-swiftshader',
     '--use-gl=angle', '--use-angle=swiftshader',

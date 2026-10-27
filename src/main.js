@@ -97,7 +97,7 @@ function setHud() {
   if (busted) {
     hud.hint.textContent = 'Press Reset (R) to start again with 100 stardust';
   } else {
-    hud.hint.textContent = 'Click the machine, pull the lever, or press Space';
+    hud.hint.textContent = 'Click the machine, drag the lever down, or press Space';
   }
 }
 
@@ -258,13 +258,65 @@ window.addEventListener('pointerleave', () => {
 
 const canvas = stage.renderer.domElement;
 
+// The lever is draggable, not just clickable: grabbing the knob and pulling it
+// down is the gesture the machine is shaped to invite, and the hint line
+// promises it. A plain click anywhere else still spins.
+const raycaster = new THREE.Raycaster();
+const leverNdc = new THREE.Vector2();
+
+const TAP_SLOP = 6;
+let leverDrag = null;
+
+function leverNdcFromEvent(e) {
+  const r = canvas.getBoundingClientRect();
+  leverNdc.set(((e.clientX - r.left) / r.width) * 2 - 1,
+    -((e.clientY - r.top) / r.height) * 2 + 1);
+  return leverNdc;
+}
+
+function hitsLever(e) {
+  raycaster.setFromCamera(leverNdcFromEvent(e), stage.camera);
+  return machine.hitLever(raycaster);
+}
+
 canvas.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return;
+  if (hitsLever(e)) {
+    // Anchor on the press point so the knob does not jump to the cursor.
+    leverDrag = { startY: e.clientY, travelPx: Math.max(70, window.innerHeight * 0.14), k: 0 };
+    canvas.setPointerCapture?.(e.pointerId);
+    machine.setLeverDrag(0);
+    return;
+  }
   pull();
 });
 
-// Clicking the lever itself gives the same result, with a bit more punch.
-canvas.addEventListener('pointerup', () => {});
+canvas.addEventListener('pointermove', (e) => {
+  if (!leverDrag) {
+    canvas.style.cursor = hitsLever(e) ? 'grab' : '';
+    return;
+  }
+  // Downward drag maps to pull; the lever follows the pointer 1:1 in feel.
+  leverDrag.k = (e.clientY - leverDrag.startY) / leverDrag.travelPx;
+  machine.setLeverDrag(leverDrag.k);
+  canvas.style.cursor = 'grabbing';
+});
+
+function endLeverDrag(e) {
+  if (!leverDrag) return;
+  const { startY } = leverDrag;
+  leverDrag = null;
+  canvas.style.cursor = '';
+  canvas.releasePointerCapture?.(e.pointerId);
+  const dragged = machine.releaseLeverDrag();
+  // A tap is a click, not a failed pull: before the lever was draggable, any
+  // click on it spun, and that has to keep working.
+  const tapped = Math.abs(e.clientY - startY) < TAP_SLOP;
+  if (dragged || tapped) pull();
+}
+
+canvas.addEventListener('pointerup', endLeverDrag);
+canvas.addEventListener('pointercancel', endLeverDrag);
 
 hud.reset.addEventListener('click', (e) => {
   e.stopPropagation();
@@ -450,6 +502,12 @@ async function attract() {
 // damp() and tween backwards.
 let last = null;
 let elapsed = 0;
+
+// Test hook: `window.__jump(t)` advances the scene clock by `t` seconds without
+// waiting for it. Meteors are 1-2 second events on 10-25 second cycles, so the
+// only way to review them without sitting through minutes of real time is to
+// move the clock by hand.
+window.__jump = (t) => { elapsed += t; };
 
 function frame(now) {
   if (last === null) {

@@ -24,6 +24,10 @@ const CABINET_H = 4.25;
 const CABINET_D = 1.55;
 const CABINET_FRONT = CABINET_D / 2;
 const RADIUS = 0.34;
+// How far the lever's knob travels when pulled. Long enough to read as a real
+// pull on a monolith this size, short enough to stay on screen.
+const LEVER_TRAVEL = 0.86;
+const LEVER_TOP = 2.06;
 
 // One accent, used sparingly: the payline, the seams and win states.
 const ACCENT = 0x5f9cff;
@@ -341,38 +345,59 @@ export class SlotMachine {
   // --------------------------------------------------------------- lever
 
   buildLever() {
-    const { metal, metalDark, face } = this.mats;
+    const { metal, metalDark, face, shell } = this.mats;
 
-    const housing = new THREE.Mesh(new RoundedBoxGeometry(0.30, 0.54, 0.46, 4, 0.08), face);
-    housing.position.set(CABINET_W / 2 + 0.08, 0.30, 0.30);
+    // A vertical pull on the front-right corner. The arm hangs in a slot cut
+    // into a proud housing and the knob travels straight down; the old version
+    // pivoted around Z, which swung the arm out sideways like a car indicator.
+    const X = CABINET_W / 2 + 0.34;
+    const Z = CABINET_FRONT - 0.28;
+    const travel = LEVER_TRAVEL;
+
+    // The housing stands proud of the fascia so the arm reads against the sky
+    // instead of being swallowed by the cabinet.
+    const housing = new THREE.Mesh(new RoundedBoxGeometry(0.40, 2.10, 0.34, 4, 0.10), face);
+    housing.position.set(X, LEVER_TOP - 1.02, Z);
     this.body.add(housing);
 
-    // Pivot sits outside the flank so the arm sweeps clear of the cabinet.
-    const pivot = new THREE.Group();
-    pivot.position.set(CABINET_W / 2 + 0.30, 0.34, 0.30);
-    this.body.add(pivot);
+    const cap = new THREE.Mesh(new RoundedBoxGeometry(0.48, 0.12, 0.42, 4, 0.05), shell);
+    cap.position.set(X, LEVER_TOP + 0.05, Z);
+    this.body.add(cap);
 
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.135, 0.135, 0.2, 28), metal);
-    hub.rotation.z = Math.PI / 2;
-    pivot.add(hub);
+    const foot = new THREE.Mesh(new RoundedBoxGeometry(0.48, 0.12, 0.42, 4, 0.05), shell);
+    foot.position.set(X, LEVER_TOP - 2.14, Z);
+    this.body.add(foot);
 
-    const boss = new THREE.Mesh(new THREE.CylinderGeometry(0.072, 0.072, 0.26, 20), metalDark);
-    boss.rotation.z = Math.PI / 2;
-    pivot.add(boss);
+    // The dark slot the arm rides in.
+    const slot = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.155, travel + 0.40),
+      new THREE.MeshBasicMaterial({ color: 0x010307, toneMapped: false }),
+    );
+    slot.position.set(X, LEVER_TOP - 0.45 - travel * 0.5, Z + 0.172);
+    this.body.add(slot);
 
-    const arm = new THREE.Group();
-    pivot.add(arm);
+    // Everything that moves: `leverPull` shifts this group down in Y.
+    const slide = new THREE.Group();
+    slide.position.set(X, LEVER_TOP, Z + 0.245);
+    this.body.add(slide);
 
-    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.055, 1.55, 20), metal);
-    rod.position.y = 0.81;
-    arm.add(rod);
+    // The guide rod is fixed to the cabinet, not to the slide. Parenting it to
+    // the slide moved its top end with the knob, so at full pull a bare rod cap
+    // floated in front of the fascia. As a fixed shaft it always ends under the
+    // cap, and the knob is what travels.
+    const rodLen = LEVER_TOP + 0.05 + 0.02;
+    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, rodLen, 20), metal);
+    rod.position.set(X, LEVER_TOP + 0.05 - rodLen / 2, Z + 0.245);
+    this.body.add(rod);
 
-    // Knurled grip rings near the hub.
-    for (let i = 0; i < 4; i++) {
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.055, 0.009, 8, 22), metalDark);
+    // Knurled grip rings, on the stretch of rod above the knob. Seven rings in
+    // the old spacing ran past the knob once the knob moved up the rod, so the
+    // count and pitch follow the gap that is actually there.
+    for (let i = 0; i < 3; i++) {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.070, 0.011, 10, 24), metalDark);
       ring.rotation.x = Math.PI / 2;
-      ring.position.y = 0.24 + i * 0.062;
-      arm.add(ring);
+      ring.position.y = -0.13 - i * 0.09;
+      slide.add(ring);
     }
 
     // Dark knob: the one soft, rounded mass on the machine.
@@ -381,20 +406,25 @@ export class SlotMachine {
       clearcoat: 1, clearcoatRoughness: 0.14, envMapIntensity: 1.2,
       emissive: ACCENT, emissiveIntensity: 0,
     });
-    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.2, 32, 24), knobMat);
-    knob.position.y = 1.60;
-    arm.add(knob);
+    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.235, 32, 24), knobMat);
+    knob.position.y = -0.66;
+    slide.add(knob);
     this.knobMat = knobMat;
 
-    const collar = new THREE.Mesh(new THREE.TorusGeometry(0.155, 0.022, 10, 28), metal);
+    const collar = new THREE.Mesh(new THREE.TorusGeometry(0.165, 0.026, 10, 28), metal);
     collar.rotation.x = Math.PI / 2;
-    collar.position.y = 1.45;
-    arm.add(collar);
+    collar.position.y = -0.43;
+    slide.add(collar);
 
-    const restZ = 0.08;
-    pivot.rotation.z = restZ;
-    // Negative Z swings the arm clockwise, dropping the knob toward the floor.
-    this.lever = { pivot, arm, knob, restZ, pullZ: -1.24 };
+    // Return spring, hidden inside the housing above the arm.
+    const spring = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.062, 0.062, 0.34, 12, 1, true),
+      metalDark,
+    );
+    spring.position.y = -0.09;
+    slide.add(spring);
+
+    this.lever = { slide, knob, collar, travel, rest: 0, pulled: travel };
   }
 
   buildWordmark() {
@@ -570,14 +600,53 @@ export class SlotMachine {
     this.joltVel = -3.0 * strength;
   }
 
+  /** True when a screen-space ray passes through the knob or its collar. */
+  hitLever(raycaster) {
+    if (!this.lever) return false;
+    return raycaster.intersectObjects([this.lever.knob, this.lever.collar], false).length > 0;
+  }
+
+  /**
+   * Live drag feedback. `k` is 0 at rest and 1 at the bottom of the travel.
+   * The release animation is cancelled while the pointer holds the knob, so
+   * the lever follows the cursor instead of fighting it.
+   */
+  setLeverDrag(k) {
+    if (!this.lever) return;
+    this.leverDrag = clamp(k);
+    this.leverPull = this.leverDrag * this.lever.travel;
+  }
+
+  /**
+   * Ends a drag. Returns true when it travelled far enough to count as a pull;
+   * the caller then spins, which runs the full down-and-spring-back animation.
+   * A short tug just springs back from wherever it was released.
+   */
+  releaseLeverDrag() {
+    const k = this.leverDrag ?? 0;
+    this.leverDrag = null;
+    if (k <= 0.45) {
+      const from = this.leverPull;
+      this.tweens.add({
+        dur: 0.34, from, to: this.lever.rest, ease: (t) => easeOutBack(t, 1.7),
+        onUpdate: (v) => { this.leverPull = v; },
+      });
+    }
+    return k > 0.45;
+  }
+
   pullLever() {
+    this.leverDrag = null;
+    const { rest, pulled } = this.lever;
+    // Down fast, back slow with a spring overshoot: the asymmetry is what makes
+    // it feel like it had a detent to clear.
     this.tweens.add({
-      dur: 0.22, from: this.lever.restZ, to: this.lever.pullZ, ease: easeOutQuart,
+      dur: 0.20, from: rest, to: pulled, ease: easeOutQuart,
       onUpdate: (v) => { this.leverPull = v; },
     });
     this.tweens.add({
-      delay: 0.34, dur: 0.85, from: this.lever.pullZ, to: this.lever.restZ,
-      ease: (t) => easeOutBack(t, 1.55),
+      delay: 0.36, dur: 0.92, from: pulled, to: rest,
+      ease: (t) => easeOutBack(t, 1.7),
       onUpdate: (v) => { this.leverPull = v; },
     });
   }
@@ -627,8 +696,12 @@ export class SlotMachine {
     }
 
     if (this.lever) {
-      this.lever.pivot.rotation.z = this.leverPull;
-      this.knobMat.emissiveIntensity = 0;
+      // Negative: a pull runs the knob *down* the rod. Adding it lifted the
+      // knob off the top of the machine, the opposite of a slot lever.
+      this.lever.slide.position.y = LEVER_TOP - this.leverPull;
+      // The knob catches a little light as it drops: motion reads even when the
+      // frame is quiet.
+      this.knobMat.emissiveIntensity = Math.abs(this.leverPull) * 0.10;
     }
 
     // Seams breathe with the machine's state; on a win they flare.

@@ -3,16 +3,37 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { moteTexture, glowTexture } from './textures.js';
-import { clamp, damp } from './util.js';
+import { BlackHole } from './blackhole.js';
+import { damp } from './util.js';
 
-// Everything the camera has to keep on screen, in world units.
-const CONTENT = { halfW: 2.75, halfH: 3.6, centerY: 0.34 };
-const FRAME_MARGIN = 1.2;
+// Everything the camera has to keep on screen, in world units. The lever swings
+// down past the cabinet now, so the box is a little wider than it was.
+const CONTENT = { halfW: 3.45, halfH: 3.85, centerY: 0.26 };
+const FRAME_MARGIN = 1.14;
 
-// How far behind the machine the black hole sits. Kept well back so it reads as
-// a halo around the silhouette rather than a rival subject.
-const HOLE_Z = -34;
+// Where the shadow goes, in screen uv relative to centre, and how big it is as a
+// fraction of the short side. The hole is the subject of this wallpaper; the
+// machine stands in front of it rather than the other way round.
+// `?hole=frac,panX,panY` overrides it, which is how the framing below was
+// arrived at: the composition has to be judged by eye, not by arithmetic.
+// The hole is framed in screen space, so these are fractions of the viewport
+// rather than world units. `frac` is the shadow's radius as a fraction of the
+//short  edge: it has to be large enough that the frame reads as a black hole first
+// and a slot machine second, but the shadow must stay behind the machine.
+const HOLE = { panX: -0.30, panY: 0.12, frac: 0.55 };
+{
+  const q = new URLSearchParams(location.search).get('hole');
+  if (q) {
+    const [frac, panX, panY] = q.split(',').map(Number);
+    if (Number.isFinite(frac)) HOLE.frac = frac;
+    if (Number.isFinite(panX)) HOLE.panX = panX;
+    if (Number.isFinite(panY)) HOLE.panY = panY;
+  }
+}
+
+// Exposed for tuning from the console and from tools/: framing is a visual
+// judgement, so being able to sweep it without a rebuild matters.
+if (typeof window !== 'undefined') window.__holeCfg = HOLE;
 
 export class Stage {
   constructor(container, { tweens = null } = {}) {
@@ -20,7 +41,7 @@ export class Stage {
     this.tweens = tweens;
 
     this.renderer = new THREE.WebGLRenderer({
-      antialias: true,
+      antialias: false,   // the composer's output pass handles AA
       alpha: false,
       powerPreference: 'high-performance',
     });
@@ -31,7 +52,7 @@ export class Stage {
     container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x05070c);
+    this.scene.background = new THREE.Color(0x000000);
 
     this.camera = new THREE.PerspectiveCamera(36, 1, 0.1, 220);
     this.camera.position.set(0, CONTENT.centerY, 13);
@@ -39,7 +60,6 @@ export class Stage {
     this.scene.environment = this.buildEnv();
     this.scene.environmentIntensity = 0.75;
 
-    this.buildStars();
     this.buildBlackHole();
     this.buildLights();
     this.buildPost();
@@ -53,257 +73,32 @@ export class Stage {
     this.shake = 0;
     this.shakeDecay = 0;
 
+    this.viewW = 1;
+    this.viewH = 1;
+    this.skyPan = new THREE.Vector2(HOLE.panX, HOLE.panY);
+
     window.addEventListener('resize', () => this.resize());
     this.watchPixelRatio();
     this.resize();
   }
 
   /**
-   * Two star layers at different depths. The near layer drifts further with the
-   * cursor, which is what makes the machine feel like it is *in* the scene
-   * rather than pasted on top of it.
-   */
-  buildStars() {
-    const make = (count, spread, size, opacity) => {
-      const pos = new Float32Array(count * 3);
-      const ph = new Float32Array(count);
-      for (let i = 0; i < count; i++) {
-        pos[i * 3] = (Math.random() - 0.5) * spread;
-        pos[i * 3 + 1] = (Math.random() - 0.5) * spread * 0.7;
-        pos[i * 3 + 2] = -18 - Math.random() * 60;
-        ph[i] = Math.random();
-      }
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-      geo.setAttribute('aPhase', new THREE.BufferAttribute(ph, 1));
-
-      const mat = new THREE.ShaderMaterial({
-        uniforms: {
-          uMap: { value: moteTexture() },
-          uTime: { value: 0 },
-          uOpacity: { value: opacity },
-          uSize: { value: size },
-        },
-        vertexShader: /* glsl */ `
-          attribute float aPhase;
-          uniform float uTime;
-          uniform float uSize;
-          varying float vTwinkle;
-          void main() {
-            vTwinkle = 0.55 + 0.45 * sin(uTime * (0.6 + aPhase * 1.6) + aPhase * 6.283);
-            vec4 mv = modelViewMatrix * vec4(position, 1.0);
-            gl_Position = projectionMatrix * mv;
-            gl_PointSize = uSize * (0.6 + aPhase * 1.1);
-          }
-        `,
-        fragmentShader: /* glsl */ `
-          uniform sampler2D uMap;
-          uniform float uOpacity;
-          varying float vTwinkle;
-          void main() {
-            vec4 t = texture2D(uMap, gl_PointCoord);
-            if (t.a < 0.02) discard;
-            gl_FragColor = vec4(vec3(0.86, 0.92, 1.0) * t.rgb, t.a * uOpacity * vTwinkle);
-          }
-        `,
-        transparent: true,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        toneMapped: false,
-      });
-
-      const pts = new THREE.Points(geo, mat);
-      pts.frustumCulled = false;
-      this.scene.add(pts);
-      return pts;
-    };
-
-    this.starsFar = make(1500, 170, 2.4, 0.85);
-    this.starsNear = make(360, 110, 3.4, 0.6);
-  }
-
-  /**
-   * The black hole as a single coherent image rather than a stack of meshes.
-   * What makes a black hole legible is the *lensed* silhouette: a shadow with a
-   * bright rim that is thick and hot on one flank, plus the accretion disc
-   * sweeping across the front of it. RingGeometry outlines read as stickers, so
-   * all of it is painted into one canvas and faded at the edges.
+   * The black hole is a real one: an offscreen pass that integrates a null
+   * geodesic per pixel (see blackhole.js) and returns a full-screen image of the
+   * sky with the accretion disc lensed through it. The stage draws that image as
+   * a backdrop quad and composites the machine over it, which is why the shadow
+   * can sit behind the cabinet and still be genuinely black.
    */
   buildBlackHole() {
-    const group = new THREE.Group();
-    group.position.set(-10.5, 4.6, HOLE_Z);
-    this.scene.add(group);
-    this.hole = group;
-
-    const SIZE = 30;
-
-    const body = new THREE.Mesh(
-      new THREE.PlaneGeometry(SIZE, SIZE),
-      new THREE.MeshBasicMaterial({
-        map: this.blackHoleTexture(),
-        transparent: true, depthWrite: false,
-        blending: THREE.NormalBlending, toneMapped: false, opacity: 0.95,
-      }),
-    );
-    group.add(body);
-    this.photon = body;
-
-    // Wide, very faint spill: this is what lights the scene around the hole.
-    const halo = new THREE.Mesh(
-      new THREE.PlaneGeometry(SIZE * 2.1, SIZE * 2.1),
-      new THREE.MeshBasicMaterial({
-        map: glowTexture('rgba(96,132,196,0.30)', 'rgba(40,64,120,0)', 256),
-        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-        toneMapped: false, opacity: 0.5,
-      }),
-    );
-    halo.position.z = -1.2;
-    group.add(halo);
-    this.halo = halo;
-
-    this.disc = body;
-    this.capBand = body;
-  }
-
-  /**
-   * Paints the hole into one canvas: shadow, beamed rim, and the accretion
-   * disc crossing in front.
-   *
-   * Two details make or break this. The shadow has to be genuinely opaque, so
-   * the mesh uses normal blending (additive can only add light, so a "black"
-   * shadow would just show the sky through it). And the rim has to be built
-   * from concentric full circles rather than a comb of arc segments, which is
-   * what produced visible ribbing.
-   */
-  blackHoleTexture() {
-    const S = 1024;
-    const cx = S / 2;
-    const cy = S / 2;
-    const R = S * 0.185;
-
-    const layer = () => {
-      const c = document.createElement('canvas');
-      c.width = S;
-      c.height = S;
-      return [c, c.getContext('2d')];
-    };
-
-    // --- rim, in its own layer so it can be beamed left-to-right -------------
-    const [rimC, rim] = layer();
-    for (let i = 0; i < 150; i++) {
-      const t = i / 150;
-      // Radial profile: a bright thin edge just outside the shadow, falling off.
-      const r = R * (0.985 + t * 0.30);
-      const alpha = 0.55 * (1 - t) ** 2.2;
-      rim.strokeStyle = `rgba(232,243,255,${alpha})`;
-      rim.lineWidth = 1.6;
-      rim.beginPath();
-      rim.arc(cx, cy, r, 0, Math.PI * 2);
-      rim.stroke();
-    }
-    // Doppler beaming: multiply the rim out toward the right.
-    rim.globalCompositeOperation = 'destination-in';
-    const beam = rim.createLinearGradient(cx - R * 1.35, 0, cx + R * 1.35, 0);
-    beam.addColorStop(0, 'rgba(255,255,255,1)');
-    beam.addColorStop(0.45, 'rgba(255,255,255,0.55)');
-    beam.addColorStop(1, 'rgba(255,255,255,0.05)');
-    rim.fillStyle = beam;
-    rim.fillRect(0, 0, S, S);
-
-    // --- accretion disc, feathered so it dissolves into the sky -------------
-    const [discC, disc] = layer();
-    disc.translate(cx, cy);
-    disc.rotate(-0.05);
-    for (let k = 0; k < 520; k++) {
-      const y = (Math.random() - 0.5) * R * 1.15;
-      // Elliptical falloff: filaments die out toward the top and bottom.
-      const span = Math.sqrt(Math.max(0, 1 - (y / (R * 0.62)) ** 2));
-      const halfLen = R * (0.55 + Math.random() * 0.7) * span;
-      if (halfLen < 2) continue;
-      const x0 = -halfLen * (0.2 + Math.random() * 0.8);
-      const len = halfLen * (0.25 + Math.random() * 0.75);
-      const alpha = (0.05 + Math.random() * 0.22) * span;
-      const warm = Math.random();
-      disc.strokeStyle = warm > 0.84
-        ? `rgba(255,236,212,${alpha})`
-        : `rgba(${Math.round(180 + warm * 50)},${Math.round(208 + warm * 32)},255,${alpha})`;
-      disc.lineWidth = 0.6 + Math.random() * 1.7;
-      disc.beginPath();
-      disc.moveTo(x0, y + (Math.random() - 0.5) * 1.5);
-      disc.lineTo(x0 + len, y + (Math.random() - 0.5) * 1.5);
-      disc.stroke();
-    }
-    // Fade the disc's outer reach without touching the shadow.
-    disc.setTransform(1, 0, 0, 1, 0, 0);
-    disc.globalCompositeOperation = 'destination-in';
-    const dfade = disc.createRadialGradient(cx, cy, R * 1.05, cx, cy, R * 2.3);
-    dfade.addColorStop(0, 'rgba(255,255,255,1)');
-    dfade.addColorStop(1, 'rgba(255,255,255,0)');
-    disc.fillStyle = dfade;
-    disc.fillRect(0, 0, S, S);
-
-    // --- assemble -----------------------------------------------------------
-    const c = document.createElement('canvas');
-    c.width = S;
-    c.height = S;
-    const ctx = c.getContext('2d');
-
-    // Outer glow first; the shadow will cover its middle.
-    const glow = ctx.createRadialGradient(cx, cy, R * 1.0, cx, cy, R * 3.4);
-    glow.addColorStop(0, 'rgba(150,190,250,0.20)');
-    glow.addColorStop(0.45, 'rgba(110,150,215,0.07)');
-    glow.addColorStop(1, 'rgba(70,110,180,0)');
-    ctx.fillStyle = glow;
-    ctx.beginPath();
-    ctx.arc(cx, cy, R * 3.4, 0, Math.PI * 2);
-    ctx.fill();
-
-    // The silhouette. Opaque black is the whole point.
-    ctx.fillStyle = '#000000';
-    ctx.beginPath();
-    ctx.arc(cx, cy, R, 0, Math.PI * 2);
-    ctx.fill();
-
-    // The lensed far side of the disc, which appears as a thin arc above the
-    // shadow and a brighter one below it.
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(-0.05);
-    for (const [ry, alpha, w] of [[1.02, 0.5, 2.6], [1.16, 0.28, 1.8]]) {
-      ctx.strokeStyle = `rgba(226,240,255,${alpha})`;
-      ctx.lineWidth = w;
-      ctx.beginPath();
-      ctx.ellipse(0, 0, R * 1.42, R * ry * 0.30, 0, Math.PI * 0.06, Math.PI * 0.94);
-      ctx.stroke();
-    }
-    ctx.restore();
-
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.drawImage(rimC, 0, 0);
-    ctx.drawImage(discC, 0, 0);
-    ctx.globalCompositeOperation = 'source-over';
-
-    // Without this the glow still has alpha at the canvas border, which shows up
-    // as a rectangular seam the size of the plane. Fade out well inside the
-    // edge; the shadow (radius R) is far inside the fade start.
-    ctx.globalCompositeOperation = 'destination-in';
-    const edge = ctx.createRadialGradient(cx, cy, R * 1.35, cx, cy, S * 0.46);
-    edge.addColorStop(0, 'rgba(255,255,255,1)');
-    edge.addColorStop(0.55, 'rgba(255,255,255,0.55)');
-    edge.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = edge;
-    ctx.fillRect(0, 0, S, S);
-    ctx.globalCompositeOperation = 'source-over';
-
-    const tex = new THREE.CanvasTexture(c);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    return tex;
+    this.hole = new BlackHole(this.renderer);
+    this.scene.add(this.hole.quad);
   }
 
   /**
    * The environment map chrome samples. Cool strips plus one white overhead
    * softbox: a plain room env makes metal read as flat grey, and warm strips
-   * would fight the blue palette.
+   * would fight the blue palette. One amber panel stands in for the accretion
+   * disc so the polished edges pick up a little of its heat.
    */
   buildEnv() {
     const scene = new THREE.Scene();
@@ -323,14 +118,12 @@ export class Stage {
       scene.add(m);
     };
 
-    // Overhead softbox: the main specular streak along every rounded edge.
     panel(7, 2.4, 0xf2f7ff, 3.6, 0, 8, 0.5);
-    // Cold vertical strips left and right.
     panel(4.5, 8, 0x3d6ea8, 1.5, -6.5, 1.0, 1.5);
     panel(4.5, 8, 0x2a4f80, 1.2, 6.5, 1.0, 1.5);
-    // Faint floor bounce so the underside of the plinth is not pure black.
     panel(9, 5, 0x2b3d55, 0.5, 0, -5.5, 2.0);
-    // Small hot pings that give polished metal its sparkle.
+    // The disc, off to one side: warm bounce on the metal, matched to the hole.
+    panel(6, 3.2, 0xff9a54, 0.5, -3.0, 2.4, -4.5);
     panel(1.1, 1.1, 0xffffff, 6.0, -2.6, 5.2, 5.0);
     panel(1.1, 1.1, 0xffffff, 4.2, 3.1, 4.4, 5.0);
     panel(2.2, 0.5, 0xffffff, 5.0, 0.4, 2.2, 7.0);
@@ -348,10 +141,10 @@ export class Stage {
   }
 
   buildLights() {
-    this.scene.add(new THREE.AmbientLight(0x9fb6d4, 0.30));
+    this.scene.add(new THREE.AmbientLight(0x9fb6d4, 0.26));
 
     // Key is a narrow spot so the cabinet reads as lit, not glowing.
-    const key = new THREE.SpotLight(0xeaf2ff, 150, 40, 0.54, 0.7, 1.5);
+    const key = new THREE.SpotLight(0xeaf2ff, 165, 40, 0.54, 0.7, 1.5);
     key.position.set(0, 10, 12);
     key.target.position.set(0, 0.2, 0);
     this.scene.add(key, key.target);
@@ -365,6 +158,11 @@ export class Stage {
     this.rimR = new THREE.PointLight(0x8fb4e8, 22, 22, 2);
     this.rimR.position.set(7.0, 1.8, 4.6);
     this.scene.add(this.rimR);
+
+    // Warm bounce from the accretion disc, up and to the left where it sits.
+    this.discLight = new THREE.PointLight(0xffa869, 30, 30, 2);
+    this.discLight.position.set(-9.5, 5.0, -2.0);
+    this.scene.add(this.discLight);
 
     // Tight highlight that travels down the lever rod.
     this.leverKick = new THREE.PointLight(0xffffff, 20, 12, 2);
@@ -384,17 +182,20 @@ export class Stage {
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
 
+    // A tight, high-threshold bloom. A wide one bleeds the disc's glow into the
+    // shadow and the whole thing turns into a grey blob, which is exactly the
+    // failure this wallpaper is trying to avoid.
     this.bloom = new UnrealBloomPass(
       new THREE.Vector2(size.x, size.y),
-      0.42,  // strength
-      0.72,  // radius
-      0.80,  // threshold
+      0.62,  // strength
+      0.22,  // radius
+      1.05,  // threshold
     );
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
 
-    this.bloomTarget = 0.42;
-    this.bloomLevel = 0.42;
+    this.bloomTarget = 0.62;
+    this.bloomLevel = 0.62;
   }
 
   /**
@@ -415,6 +216,9 @@ export class Stage {
     const w = this.container.clientWidth || window.innerWidth;
     const h = this.container.clientHeight || window.innerHeight;
     const dpr = Math.min(window.devicePixelRatio, 2) || 1;
+    this.viewW = w;
+    this.viewH = h;
+
     this.renderer.setPixelRatio(dpr);
     // `false` keeps three.js from writing inline styles, so the CSS size has to
     // be set here. Without this the canvas lays out at its backing-store size
@@ -426,6 +230,7 @@ export class Stage {
     canvas.style.height = `${h}px`;
     this.composer.setSize(w, h);
     this.bloom.setSize(w, h);
+
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
 
@@ -443,6 +248,13 @@ export class Stage {
     this.camera.position.y = CONTENT.centerY;
     this.camera.position.z = this.baseZ;
     this.camera.updateProjectionMatrix();
+
+    // The hole is framed in screen space so the composition survives any aspect
+    // ratio: same relative size, same place relative to the machine.
+    this.hole.setSize(Math.round(w * dpr), Math.round(h * dpr));
+    this.hole.setFraming(w, h, HOLE.frac, HOLE.panX, HOLE.panY);
+    // Accumulated frames from before the resize describe a different image.
+    this.hole.resetAccumulation();
   }
 
   setPointer(nx, ny) {
@@ -493,23 +305,19 @@ export class Stage {
     );
     this.camera.lookAt(px * 0.25, CONTENT.centerY - py * 0.18, 0);
 
-    // Stars drift at different rates: the near layer moves furthest.
-    this.starsFar.material.uniforms.uTime.value = t;
-    this.starsNear.material.uniforms.uTime.value = t;
-    this.starsNear.position.x = px * 0.55;
-    this.starsNear.position.y = -py * 0.35;
-    this.starsFar.position.x = px * 0.22;
-    this.starsFar.position.y = -py * 0.14;
-
-    // The hole turns very slowly and breathes; on a win the ring flares.
-    const flare = this.excite * 0.5;
-    this.photon.material.opacity = 0.72 + Math.sin(t * 0.4) * 0.05 + flare * 0.5;
-    this.halo.material.opacity = 0.4 + Math.sin(t * 0.3) * 0.04 + flare * 0.35;
-    this.hole.position.x = -10.5 + px * -0.6;
-    this.hole.position.y = 4.6 + py * 0.3 + Math.sin(t * 0.22) * 0.08;
+    // The hole drifts a fraction of the machine's parallax: enough to feel far
+    // away, not enough to slide the shadow off its mark. A slow sine keeps the
+    // wallpaper alive when the cursor never moves.
+    this.skyPan.set(
+      HOLE.panX - px * 0.022 + Math.sin(t * 0.061) * 0.007,
+      HOLE.panY - py * 0.015 + Math.cos(t * 0.047) * 0.005,
+    );
+    this.hole.setFraming(this.viewW, this.viewH, HOLE.frac, this.skyPan.x, this.skyPan.y);
+    this.hole.update(t, this.excite);
 
     this.rimL.intensity = 34 + Math.sin(t * 1.5) * 5 + this.excite * 20;
     this.rimR.intensity = 22 + Math.cos(t * 1.35) * 4 + this.excite * 12;
+    this.discLight.intensity = 30 + Math.sin(t * 0.43) * 4 + this.excite * 22;
     this.under.intensity = 8 + this.excite * 6;
 
     this.bloomLevel = damp(this.bloomLevel, this.bloomTarget + this.excite * 0.10, 4, dt);
@@ -517,6 +325,8 @@ export class Stage {
   }
 
   render() {
+    // Offscreen first: the sky has to exist before the scene composites onto it.
+    this.hole.render();
     this.composer.render();
   }
 }
