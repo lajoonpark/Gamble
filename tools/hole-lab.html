@@ -1,0 +1,133 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>hole lab</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+  canvas { display: block; }
+</style>
+<canvas id="c"></canvas>
+<script type="importmap">
+{ "imports": { "three": "../vendor/three.module.js", "three/addons/": "../vendor/addons/" } }
+</script>
+<script type="module">
+  import * as THREE from 'three';
+  import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+  import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+  import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+  import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+  import { BlackHole } from '../src/blackhole.js';
+
+  // Renders the black-hole pass alone, under the same tone mapping and output
+  // colour space the game uses. Loading this instead of index.html skips the
+  // machine, HUD and composer, which is the difference between a ten second and
+  // a half-minute iteration while the disc is being tuned.
+  //
+  // It draws a fixed number of frames and then holds still, so a screenshot is
+  // deterministic: the accumulation history is settled, not mid-warm-up.
+  const params = new URLSearchParams(location.search);
+  const W = Number(params.get('w') || window.innerWidth);
+  const H = Number(params.get('h') || window.innerHeight);
+  const FRAMES = Number(params.get('frames') || 6);
+
+  const renderer = new THREE.WebGLRenderer({
+    canvas: document.getElementById('c'),
+    antialias: false,
+    alpha: false,
+    preserveDrawingBuffer: true,
+    powerPreference: 'high-performance',
+  });
+  renderer.setPixelRatio(1);
+  renderer.setSize(W, H, false);
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+  const STEPS = Number(params.get('steps') || 176);
+  const ACCUM = params.get('accum');
+  const hole = new BlackHole(renderer, { maxPixels: W * H, steps: STEPS });
+  if (ACCUM) hole.accumAlpha = Number(ACCUM);
+  const scene = new THREE.Scene();
+  scene.add(hole.quad);
+  const camera = new THREE.Camera();
+
+  // The same bloom the game applies. Without it the lab judges the disc far
+  // dimmer than the wallpaper ever shows it, and every gain tuned here would
+  // come out wrong once it is composited for real.
+  const composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+  const BLOOM = { strength: 0.62, radius: 0.22, threshold: 1.05 };
+  const bloom = new UnrealBloomPass(new THREE.Vector2(W, H),
+    BLOOM.strength, BLOOM.radius, BLOOM.threshold);
+  composer.addPass(bloom);
+  composer.addPass(new OutputPass());
+  composer.setSize(W, H);
+  bloom.setSize(W, H);
+
+  // Seeded from the instance itself, so the lab cannot drift from the wallpaper's
+  // camera or disc scale. Anything here is only the initial value.
+  const framing = {
+    frac: 0.80, panX: -0.30, panY: 0.12,
+    dist: hole.distance, elev: hole.elevation,
+    inner: hole.inner, outer: hole.outer,
+  };
+
+  const draw = () => {
+    hole.render();
+    composer.render();
+  };
+
+  // Patch application, in three disjoint groups: framing fields, uniforms, and
+  // plain properties. They are checked by name in that order because a stray
+  // uniform named like a framing field would otherwise silently do nothing --
+  // which is exactly the failure that made a whole sweep render identical
+  // frames.
+  const FRAMING_KEYS = new Set(['frac', 'panX', 'panY', 'dist', 'elev', 'inner', 'outer']);
+
+  function apply(patch = {}) {
+    let touched = false;
+    for (const [k, v] of Object.entries(patch)) {
+      if (k === 't' || k === 'excite') continue;
+      if (FRAMING_KEYS.has(k)) { framing[k] = v; touched = true; continue; }
+      const u = hole.material.uniforms[k];
+      if (u) {
+        u.value = Array.isArray(v) ? new THREE.Vector2(v[0], v[1]) : v;
+      } else if (k in BLOOM) {
+        BLOOM[k] = v;
+      } else {
+        hole[k] = v;
+      }
+    }
+    // Default to whatever the instance already holds, so the lab never drifts
+    // away from the wallpaper's own camera through a stale copy of a constant.
+    framing.dist = framing.dist ?? hole.distance;
+    framing.elev = framing.elev ?? hole.elevation;
+    framing.inner = framing.inner ?? hole.inner;
+    framing.outer = framing.outer ?? hole.outer;
+    hole.distance = framing.dist;
+    hole.elevation = framing.elev;
+    hole.inner = framing.inner;
+    hole.outer = framing.outer;
+    bloom.strength = BLOOM.strength;
+    bloom.radius = BLOOM.radius;
+    bloom.threshold = BLOOM.threshold;
+
+    hole.setSize(W, H);
+    hole.setFraming(W, H, framing.frac, framing.panX, framing.panY);
+    hole.resetAccumulation();
+    hole.update(Number(patch.t ?? 3.4), Number(patch.excite ?? 0));
+    for (let i = 0; i < FRAMES; i++) draw();
+    window.__labFrames = FRAMES;
+    window.__labApplied = { ...patch };
+    return touched;
+  }
+
+  window.__lab = { hole, renderer, apply, framing, W, H, drawn: false };
+
+  // Drawing straight from module evaluation blocks the load event, and the
+  // software renderer takes seconds per frame: the harness then times out
+  // waiting for a page that is busy rendering. Hand the first frames to a task
+  // after load instead.
+  window.addEventListener('load', () => {
+    setTimeout(() => { apply(); window.__lab.drawn = true; }, 0);
+  });
+</script>

@@ -20,7 +20,7 @@ const FRAME_MARGIN = 1.14;
 // rather than world units. `frac` is the shadow's radius as a fraction of the
 //short  edge: it has to be large enough that the frame reads as a black hole first
 // and a slot machine second, but the shadow must stay behind the machine.
-const HOLE = { panX: -0.30, panY: 0.12, frac: 0.55 };
+const HOLE = { panX: -0.30, panY: 0.12, frac: 0.68 };
 {
   const q = new URLSearchParams(location.search).get('hole');
   if (q) {
