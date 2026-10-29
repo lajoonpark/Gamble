@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#05070c" />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+<title>Singularity — Stardust</title>
+<style>
+  :root {
+    --ink: #eef5ff;
+    --mute: #7e93ad;
+    --hair: rgba(126,147,173,.26);
+    --accent: #5f9cff;
+    font-family: "Inter", "SF Pro Text", -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #05070c;
+    -webkit-font-smoothing: antialiased;
+    cursor: default;
+  }
+
+  #stage {
+    position: fixed;
+    inset: 0;
+  }
+
+  #stage canvas { display: block; }
+
+  /* --- floating HUD ------------------------------------------------- */
+
+  .hud {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+    transition: opacity .35s ease;
+  }
+
+  body.chrome-hidden .hud { opacity: 0; }
+
+  #session {
+    position: absolute;
+    top: 26px;
+    right: 28px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+    font-size: 9px;
+    letter-spacing: .22em;
+    text-transform: uppercase;
+    font-weight: 500;
+    color: var(--mute);
+    opacity: .8;
+  }
+
+  #session b {
+    color: var(--ink);
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: .06em;
+  }
+
+  .hud-bottom {
+    position: absolute;
+    bottom: 26px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    width: max-content;
+  }
+
+  .hud-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  #reset {
+    pointer-events: auto;
+    appearance: none;
+    cursor: pointer;
+    padding: 10px 22px;
+    border-radius: 999px;
+    font: 500 10px/1 "Inter", "SF Pro Text", -apple-system, Helvetica, Arial, sans-serif;
+    letter-spacing: .22em;
+    text-transform: uppercase;
+    color: var(--mute);
+    background: rgba(10,15,23,.5);
+    border: 1px solid var(--hair);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: color .25s, border-color .25s, background .25s, transform .18s;
+  }
+
+  #reset:hover {
+    color: var(--ink);
+    border-color: rgba(126,147,173,.5);
+    background: rgba(16,23,34,.7);
+  }
+  #reset:active { transform: scale(.98); }
+
+  /* Only shown once the page is served over http(s): on a local file or dev
+     server there is no public URL worth sharing. */
+  #share {
+    display: none;
+    pointer-events: auto;
+    appearance: none;
+    cursor: pointer;
+    padding: 10px 22px;
+    border-radius: 999px;
+    font: 500 10px/1 "Inter", "SF Pro Text", -apple-system, Helvetica, Arial, sans-serif;
+    letter-spacing: .22em;
+    text-transform: uppercase;
+    color: var(--mute);
+    background: rgba(10,15,23,.5);
+    border: 1px solid var(--hair);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: color .25s, border-color .25s, background .25s, transform .18s;
+  }
+
+  #share:hover {
+    color: var(--ink);
+    border-color: rgba(126,147,173,.5);
+    background: rgba(16,23,34,.7);
+  }
+
+  #share:active { transform: scale(.98); }
+  body.hosted #share { display: inline-block; }
+
+  .hint {
+    font-size: 9px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--mute);
+    font-weight: 400;
+    opacity: .55;
+  }
+
+  #status {
+    display: none;
+    white-space: nowrap;
+    padding: 7px 18px;
+    border-radius: 999px;
+    background: rgba(14,8,12,.55);
+    border: 1px solid rgba(255,140,158,.28);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    font: 500 9px/1 "Inter", "SF Pro Text", -apple-system, Helvetica, Arial, sans-serif;
+    letter-spacing: .26em;
+    text-transform: uppercase;
+    color: #ff9db0;
+  }
+
+  body.busted #status { display: block; }
+
+  body.busted #reset {
+    color: var(--ink);
+    border-color: rgba(255,140,158,.4);
+    animation: restful 2.4s ease-in-out infinite;
+  }
+
+  @keyframes restful {
+    0%, 100% { border-color: rgba(255,140,158,.28); }
+    50% { border-color: rgba(255,140,158,.6); }
+  }
+
+  /* Resting: the render loop is parked, so hide chrome and stop transitions. */
+  body.resting * { transition: none !important; }
+
+  .vignette {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 4;
+    background: radial-gradient(circle at 50% 46%, rgba(0,0,0,0) 46%, rgba(3,5,9,.62) 100%);
+  }
+
+  .loader {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    display: grid;
+    place-items: center;
+    background: #05070c;
+    color: var(--mute);
+    font: 400 10px/1 "Inter", "SF Pro Text", Helvetica, Arial, sans-serif;
+    letter-spacing: .34em;
+    text-transform: uppercase;
+    transition: opacity .5s ease;
+  }
+
+  .loader.hide { opacity: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+  <div id="stage"></div>
+
+  <div class="vignette"></div>
+
+  <div class="hud">
+    <div id="session">
+      <div>Spins <b id="hud-spins">0</b></div>
+      <div>Peak <b id="hud-peak">100</b></div>
+    </div>
+
+    <div class="hud-bottom">
+      <div id="status">Out of stardust</div>
+      <div class="hud-actions">
+        <button id="reset" type="button">Reset to 100</button>
+        <button id="share" type="button">Copy link</button>
+      </div>
+      <div class="hint" id="hint">Click the machine, drag the lever down, or press Space</div>
+    </div>
+  </div>
+
+  <div class="loader" id="loader">Loading</div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three.module.js",
+      "three/addons/": "./vendor/addons/"
+    }
+  }
+  </script>
+  <script type="module">
+    import('./src/main.js').then(() => {
+      const l = document.getElementById('loader');
+      l.classList.add('hide');
+      setTimeout(() => l.remove(), 600);
+    }).catch((err) => {
+      console.error(err);
+      document.getElementById('loader').textContent = 'ERROR: ' + err.message;
+    });
+  </script>
+</body>
+</html>
